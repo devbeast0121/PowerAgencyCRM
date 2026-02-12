@@ -1,0 +1,7 @@
+{
+  "name": "SimpleCRM",
+  "description": "A high-performance, responsive lightweight CRM application with advanced contact management, pipeline tracking, task organization, and integrated email/calendar features.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
