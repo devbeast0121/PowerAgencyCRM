@@ -1,6 +1,6 @@
 
 import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { Database, Circle, Building2, User as UserIcon, CheckCircle2, MoreVertical, CheckSquare, Calendar, Trash2, Sparkles, Loader2, RefreshCw, ChevronDown, ChevronUp, Volume2, Square, Headphones, AlertCircle } from 'lucide-react';
+import { Circle, Building2, User as UserIcon, CheckCircle2, MoreVertical, CheckSquare, Calendar, Trash2, Sparkles, Loader2, RefreshCw, ChevronDown, ChevronUp, Volume2, Square } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 import { NoteItem } from './NoteItem';
 import { isValidDate } from '../utils';
@@ -153,7 +153,6 @@ export const Dashboard = ({ contacts, notes, todos, emails, scheduledEvents, set
     <div className="space-y-6">
       <header className="flex justify-between items-end">
         <div><h2 className="text-2xl font-bold text-slate-800">Dashboard</h2><p className="text-slate-500">Overview of your companies and people.</p></div>
-        {contacts.length === 0 && (<button onClick={onSeedData} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm"><Database className="w-4 h-4" /> Populate Demo Data</button>)}
       </header>
       
       <div className={`bg-gradient-to-r from-indigo-600 to-emerald-600 rounded-2xl p-0.5 shadow-md overflow-hidden transition-all duration-500 ease-in-out ${isExpanded ? 'max-h-[1000px]' : 'max-h-[84px]'}`}>

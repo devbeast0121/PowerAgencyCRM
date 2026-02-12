@@ -9,7 +9,6 @@ import {
   createUserWithEmailAndPassword as _createUserWithEmailAndPassword,
   signInWithEmailAndPassword as _signInWithEmailAndPassword,
   signOut as _signOut,
-  OAuthProvider,
   updateProfile as _updateProfile
 } from 'firebase/auth';
 import { 
@@ -43,8 +42,6 @@ let signInAnonymously: any;
 let onAuthStateChanged: any;
 let signInWithGoogleCalendar: any; 
 let signInWithGoogle: any;
-let signInWithApple: any;
-let signInWithLinkedIn: any;
 let createUserWithEmailAndPassword: any;
 let signInWithEmailAndPassword: any;
 let signOut: any;
@@ -91,20 +88,6 @@ if (!isMock) {
       return result.user;
   };
 
-  // Apple Sign In
-  signInWithApple = async () => {
-      const provider = new OAuthProvider('apple.com');
-      const result = await signInWithPopup(auth, provider);
-      return result.user;
-  };
-
-  // LinkedIn Sign In (Requires OIDC setup in Firebase Console)
-  signInWithLinkedIn = async () => {
-      // Assuming 'oidc.linkedin' is configured in Firebase Console
-      const provider = new OAuthProvider('oidc.linkedin'); 
-      const result = await signInWithPopup(auth, provider);
-      return result.user;
-  };
   
   collection = _collection;
   addDoc = _addDoc;
@@ -165,15 +148,6 @@ if (!isMock) {
       return setMockUser(user, auth);
   };
 
-  signInWithApple = async () => {
-      const user = { uid: 'apple-' + Math.random(), displayName: 'Apple User', email: 'test@icloud.com', photoURL: null };
-      return setMockUser(user, auth);
-  };
-
-  signInWithLinkedIn = async () => {
-      const user = { uid: 'linkedin-' + Math.random(), displayName: 'LinkedIn User', email: 'test@linkedin.com', photoURL: null };
-      return setMockUser(user, auth);
-  };
 
   createUserWithEmailAndPassword = async (authInstance: any, email: string, password: string) => {
       const user = { uid: 'email-' + Math.random(), displayName: email.split('@')[0], email, photoURL: null };
@@ -297,7 +271,7 @@ export const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-i
 export { 
   app, auth, db, 
   signInWithCustomToken, signInAnonymously, onAuthStateChanged, 
-  signInWithGoogleCalendar, signInWithGoogle, signInWithApple, signInWithLinkedIn,
+  signInWithGoogleCalendar, signInWithGoogle,
   createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
   collection, addDoc, updateDoc, deleteDoc, doc, query, onSnapshot, serverTimestamp
 };

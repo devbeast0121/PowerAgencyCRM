@@ -1,12 +1,10 @@
 import React, { useState } from 'react';
 import { Layout, Mail, Lock, User, ArrowRight, Loader2, AlertCircle } from 'lucide-react';
-import { 
-  auth, 
-  signInWithGoogle, 
-  signInWithApple, 
-  signInWithLinkedIn, 
-  createUserWithEmailAndPassword, 
-  signInWithEmailAndPassword 
+import {
+  auth,
+  signInWithGoogle,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword
 } from '../firebase';
 import { updateProfile } from 'firebase/auth';
 
@@ -103,29 +101,13 @@ export const AuthPage = () => {
 
           {/* Social Buttons */}
           <div className="space-y-3 mb-6">
-            <button 
+            <button
               onClick={() => handleSocialLogin(signInWithGoogle)}
               disabled={isLoading}
               className="w-full flex items-center justify-center gap-3 px-4 py-2.5 border border-slate-200 rounded-lg text-slate-700 font-medium hover:bg-slate-50 hover:border-slate-300 transition-all focus:ring-2 focus:ring-slate-200 outline-none"
             >
               <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
               <span>Continue with Google</span>
-            </button>
-            <button 
-              onClick={() => handleSocialLogin(signInWithApple)}
-              disabled={isLoading}
-              className="w-full flex items-center justify-center gap-3 px-4 py-2.5 border border-slate-200 rounded-lg text-slate-700 font-medium hover:bg-slate-50 hover:border-slate-300 transition-all focus:ring-2 focus:ring-slate-200 outline-none"
-            >
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.74 1.18 0 2.45-1.62 4.37-1.62 1.03.06 2.04.5 2.87 1.18-2.57 1.55-2.05 5.75.52 6.85-.56 1.76-1.54 3.65-2.84 5.82zM12.03 5.31c-.57-1.35.13-3.14 1.41-4.31 1.48 1.03 1.54 2.94.88 4.34-1.25.07-1.78-.03-2.29-.03z"/></svg>
-              <span>Continue with Apple</span>
-            </button>
-            <button 
-              onClick={() => handleSocialLogin(signInWithLinkedIn)}
-              disabled={isLoading}
-              className="w-full flex items-center justify-center gap-3 px-4 py-2.5 border border-slate-200 rounded-lg text-slate-700 font-medium hover:bg-slate-50 hover:border-slate-300 transition-all focus:ring-2 focus:ring-slate-200 outline-none"
-            >
-              <svg className="w-5 h-5 text-[#0077b5]" viewBox="0 0 24 24" fill="currentColor"><path d="M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.762 0 5-2.239 5-5v-14c0-2.761-2.238-5-5-5zm-11 19h-3v-11h3v11zm-1.5-12.268c-.966 0-1.75-.79-1.75-1.764s.784-1.764 1.75-1.764 1.75.79 1.75 1.764-.783 1.764-1.75 1.764zm13.5 12.268h-3v-5.604c0-3.368-4-3.113-4 0v5.604h-3v-11h3v1.765c1.396-2.586 7-2.777 7 2.476v6.759z"/></svg>
-              <span>Continue with LinkedIn</span>
             </button>
           </div>
 
