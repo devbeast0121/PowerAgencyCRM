@@ -12,13 +12,10 @@ import { getInitials, isValidDate } from '../utils';
 import { StatusBadge } from './Shared';
 import { RichTextEditor } from './RichTextEditor';
 
-const getApiKey = () => {
-    try {
-        if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
-            return process.env.API_KEY;
-        }
-    } catch (e) { }
-    return undefined;
+// Helper to safely get API Key (Vite replaces process.env.API_KEY at build time)
+const getApiKey = (): string | undefined => {
+    const key = process.env.API_KEY;
+    return key && key !== '' ? key : undefined;
 };
 
 const PRESET_COLORS = [

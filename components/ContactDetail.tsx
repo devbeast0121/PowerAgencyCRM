@@ -13,16 +13,10 @@ import { WidgetItem, StatusBadge } from './Shared';
 import { RelatedContactsCard, RelatedCompanyCard } from './RelatedCards';
 import { resizeImage, fileToBase64, formatFileSize, formatDate, parseVtt, getInitials } from '../utils';
 
-// Helper to safely get API Key
-const getApiKey = () => {
-    try {
-        if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
-            return process.env.API_KEY;
-        }
-    } catch (e) {
-        // Ignore error
-    }
-    return undefined;
+// Helper to safely get API Key (Vite replaces process.env.API_KEY at build time)
+const getApiKey = (): string | undefined => {
+    const key = process.env.API_KEY;
+    return key && key !== '' ? key : undefined;
 };
 
 export const ContactDetail = ({ contact, allContacts, notes = [], emails = [], onViewEmail, onClose, onUpdate, onAddNote, onUpdateNote, onDeleteNote, tagGroups, onAddNewGroup, user, onDelete, onGroupClick, onCreateLinkedCompany, onNavigate, onCreateCompany, onCompose, liveCallProps = {}, customFields = [], pipelines = [], onSpeak, isSpeaking, onGenerateSummary }: any) => { 

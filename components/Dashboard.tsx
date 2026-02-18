@@ -5,16 +5,10 @@ import { GoogleGenAI } from "@google/genai";
 import { NoteItem } from './NoteItem';
 import { isValidDate } from '../utils';
 
-// Helper to safely get API Key
-const getApiKey = () => {
-    try {
-        if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
-            return process.env.API_KEY;
-        }
-    } catch (e) {
-        // Ignore error
-    }
-    return undefined;
+// Helper to safely get API Key (Vite replaces process.env.API_KEY at build time)
+const getApiKey = (): string | undefined => {
+    const key = process.env.API_KEY;
+    return key && key !== '' ? key : undefined;
 };
 
 export const Dashboard = ({ contacts, notes, todos, emails, scheduledEvents, setView, onSeedData, onUpdateNote, onDeleteNote, user, onNavigate, onToggleTodo, onDeleteTodo, onSpeak, isSpeaking, isAudioUnlocked }: any) => {

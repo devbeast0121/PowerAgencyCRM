@@ -237,9 +237,20 @@ export function App() {
     setLiveCallStatus('idle');
   };
 
+  // Only load mock emails in demo mode (no real Firebase config)
+  const isRealFirebase = (() => {
+    try {
+      const cfg = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+      return cfg.apiKey && cfg.apiKey !== 'mock' && cfg.apiKey !== '';
+    } catch { return false; }
+  })();
+
   useEffect(() => {
-    setEmails(generateMockEmails());
+    if (!isRealFirebase) {
+      setEmails(generateMockEmails());
+    }
   }, []);
+
 
   const handleGroupClick = (groupName: string) => {
     setFilterType(groupName);
@@ -1143,7 +1154,13 @@ ${cleanText.substring(0, 3000)}
   const selectedContact = useMemo(() => contacts.find(c => c.id === selectedContactId), [contacts, selectedContactId]);
 
   if (authLoading) return <div className="flex h-screen items-center justify-center text-slate-500">Loading...</div>;
-  if (!user) return <ErrorBoundary><AuthPage /></ErrorBoundary>;
+  if (!user) return <ErrorBoundary><AuthPage onGoogleLogin={(accessToken: string) => {
+    if (accessToken && accessToken !== "mock_gmail_token") {
+      setGmailAccessToken(accessToken);
+      setIsGoogleEmailConnected(true);
+      fetchGmailMessages(accessToken);
+    }
+  }} /></ErrorBoundary>;
 
   const liveCallProps = { isLiveCallActive: liveCallStatus === 'active', liveCallStatus, stopLiveCall, startLiveCall: handleStartLiveCall };
 

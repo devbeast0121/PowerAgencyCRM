@@ -8,7 +8,7 @@ import {
 } from '../firebase';
 import { updateProfile } from 'firebase/auth';
 
-export const AuthPage = () => {
+export const AuthPage = ({ onGoogleLogin }: { onGoogleLogin?: (accessToken: string) => void }) => {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -58,7 +58,10 @@ export const AuthPage = () => {
     setIsLoading(true);
     setError(null);
     try {
-      await providerFn();
+      const result = await providerFn();
+      if (result?.credential?.accessToken && onGoogleLogin) {
+        onGoogleLogin(result.credential.accessToken);
+      }
     } catch (err: any) {
       console.error(err);
       if (err.code === 'auth/account-exists-with-different-credential') {
