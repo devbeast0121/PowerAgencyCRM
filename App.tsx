@@ -1,12 +1,12 @@
 
 import React, { useState, useEffect, useMemo, Component, ReactNode, useRef } from 'react';
 import { 
-  Layout, BarChart3, Users, List, LayoutGrid, Plus, 
+  Layout, Users, List, LayoutGrid, Plus,
   Building2, User as UserIcon, Mail, Phone, ChevronRight, ChevronLeft, Search, 
   Circle, CheckCircle2, XCircle, Shapes, X, Minimize2, Maximize2, Send, Paperclip,
   Sparkles, Loader2, Copy, PhoneOff, Mic, SlidersHorizontal, ChevronDown, Filter, RotateCcw,
   Smile, Link as LinkIcon, Lock, Pen, MoreVertical, Trash2, HardDrive, Image as ImageIcon,
-  FileText, Clock, Calendar as CalendarIcon, Check
+  FileText, Clock, Calendar as CalendarIcon, Check, Menu
 } from 'lucide-react';
 import { GoogleGenAI, Modality, LiveServerMessage } from "@google/genai";
 import { User } from 'firebase/auth';
@@ -140,6 +140,8 @@ export function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [view, setView] = useState('dashboard');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [contacts, setContacts] = useState<any[]>([]);
   const [notes, setNotes] = useState<any[]>([]);
   const [todos, setTodos] = useState<any[]>([]);
@@ -1167,17 +1169,30 @@ ${cleanText.substring(0, 3000)}
   return (
     <ErrorBoundary>
       <div className="flex h-screen bg-white font-sans text-slate-900 overflow-hidden relative">
+        {/* Desktop Sidebar */}
         {!selectedContactId && (
-          <Sidebar currentView={view} setView={(v: string) => { setView(v); setSelectedContactId(null); }} setFilter={setFilterType} />
+          <div className="hidden md:flex">
+            <Sidebar currentView={view} setView={(v: string) => { setView(v); setSelectedContactId(null); }} setFilter={setFilterType} isCollapsed={isSidebarCollapsed} onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)} />
+          </div>
+        )}
+        {/* Mobile Sidebar Drawer */}
+        {!selectedContactId && isMobileMenuOpen && (
+          <>
+            <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setIsMobileMenuOpen(false)} />
+            <div className="fixed inset-y-0 left-0 z-50 md:hidden">
+              <Sidebar currentView={view} setView={(v: string) => { setView(v); setSelectedContactId(null); setIsMobileMenuOpen(false); }} setFilter={setFilterType} onClose={() => setIsMobileMenuOpen(false)} />
+            </div>
+          </>
         )}
         <main className="flex-1 flex flex-col h-full overflow-hidden">
           {!selectedContactId && (
             <div className="bg-white border-b border-slate-200 p-4 flex items-center justify-between md:hidden shadow-sm">
+               <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 bg-slate-100 rounded-lg"><Menu className="w-4 h-4" /></button>
                <h1 className="font-bold flex items-center gap-2 text-slate-800"><Layout className="w-5 h-5 text-emerald-500" /> SimpleCRM</h1>
-               <div className="flex gap-2"><button onClick={() => setView('dashboard')} className="p-2 bg-slate-100 rounded-lg"><BarChart3 className="w-4 h-4" /></button><button onClick={() => setView('contacts')} className="p-2 bg-slate-100 rounded-lg"><Users className="w-4 h-4" /></button></div>
+               <button onClick={() => setView('contacts')} className="p-2 bg-slate-100 rounded-lg"><Users className="w-4 h-4" /></button>
             </div>
           )}
-          <div className={`flex-1 overflow-auto ${selectedContactId ? '' : 'p-4 md:p-8'} ${view === 'email' ? 'p-0 md:p-0' : ''}`}>
+          <div className={`flex-1 overflow-auto ${view === 'email' ? 'p-0' : selectedContactId ? '' : 'p-3 sm:p-4 md:p-8'}`}>
             <div className={`mx-auto h-full ${view === 'email' ? 'max-w-full' : 'max-w-7xl'}`}>
               {view === 'dashboard' && !selectedContactId && (
                   <Dashboard contacts={contacts} notes={notes} todos={todos} emails={emails} scheduledEvents={scheduledEvents} setView={setView} onSeedData={handleSeedData} onUpdateNote={handleUpdateNote} onDeleteNote={handleDeleteNote} user={user} onNavigate={(id: string) => { setSelectedContactId(id); setView('contacts'); }} onToggleTodo={handleToggleTodo} onDeleteTodo={handleDeleteTodo} onSpeak={handleSpeak} isSpeaking={isSpeaking} />
@@ -1200,8 +1215,8 @@ ${cleanText.substring(0, 3000)}
                   {!selectedContactId && (
                     <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-6 gap-6">
                       <div><h2 className="text-2xl font-bold text-slate-800">Contacts</h2><p className="text-slate-500">{filterType === 'All' ? 'All contacts' : `Viewing ${filterType}`}</p></div>
-                      <div className="flex flex-col sm:flex-row items-center gap-4 w-full xl:w-auto">
-                        <div className="flex p-1 bg-white border border-slate-200 rounded-lg shadow-sm">
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 w-full xl:w-auto">
+                        <div className="flex flex-wrap p-1 bg-white border border-slate-200 rounded-lg shadow-sm">
                           {['All', 'Leads', 'Customers', 'Not a Fit'].map((f) => (
                             <button key={f} onClick={() => setFilterType(f)} className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${filterType === f ? 'bg-slate-100 text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}>
                                {f === 'All' && <Users className="w-4 h-4" />}
@@ -1228,19 +1243,19 @@ ${cleanText.substring(0, 3000)}
                             <table className="w-full text-left">
                               <thead className="bg-slate-50 border-b border-slate-200">
                                 <tr>
-                                  <th className="px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider w-16 text-center">Icon</th>
-                                  <th className="px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Name</th>
-                                  <th className="px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Group</th>
-                                  <th className="px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Action</th>
+                                  <th className="px-3 sm:px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider w-10 sm:w-16 text-center">Icon</th>
+                                  <th className="px-3 sm:px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Name</th>
+                                  <th className="px-3 sm:px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden sm:table-cell">Group</th>
+                                  <th className="px-3 sm:px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Action</th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-100">
                                 {filteredContacts.map(contact => (
                                     <tr key={contact.id} onClick={() => setSelectedContactId(contact.id)} className="hover:bg-slate-50 cursor-pointer transition-colors group">
-                                      <td className="px-6 py-4 text-center">{contact.type === 'Company' ? <Building2 className="w-5 h-5 text-orange-500 mx-auto" /> : <UserIcon className="w-5 h-5 text-blue-500 mx-auto" />}</td>
-                                      <td className="px-6 py-4 font-bold text-slate-900">{contact.name}</td>
-                                      <td className="px-6 py-4">{contact.groups?.join(', ') || '-'}</td>
-                                      <td className="px-6 py-4 text-right"><ChevronRight className="w-5 h-5 text-slate-400" /></td>
+                                      <td className="px-3 sm:px-6 py-3 sm:py-4 text-center">{contact.type === 'Company' ? <Building2 className="w-5 h-5 text-orange-500 mx-auto" /> : <UserIcon className="w-5 h-5 text-blue-500 mx-auto" />}</td>
+                                      <td className="px-3 sm:px-6 py-3 sm:py-4 font-bold text-slate-900 text-sm sm:text-base">{contact.name}</td>
+                                      <td className="px-3 sm:px-6 py-3 sm:py-4 hidden sm:table-cell">{contact.groups?.join(', ') || '-'}</td>
+                                      <td className="px-3 sm:px-6 py-3 sm:py-4 text-right"><ChevronRight className="w-5 h-5 text-slate-400" /></td>
                                     </tr>
                                 ))}
                               </tbody>

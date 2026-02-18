@@ -677,20 +677,22 @@ export const CalendarPage = ({
 
       return (
           <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col h-full animate-in fade-in duration-300">
-              <div className="p-4 flex items-center justify-between border-b bg-slate-50/50">
-                  <div className="flex items-center gap-4">
-                      <h3 className="text-lg font-bold text-slate-800 min-w-[150px]">
+              <div className="p-3 sm:p-4 flex flex-wrap items-center justify-between gap-2 border-b bg-slate-50/50">
+                  <div className="flex items-center gap-2 sm:gap-4">
+                      <h3 className="text-sm sm:text-lg font-bold text-slate-800 min-w-0 truncate">
                           {meetingsCalendarDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
                       </h3>
                       <div className="flex items-center bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
-                          <button onClick={prevMonth} className="p-2 hover:bg-slate-50 text-slate-600 border-r transition-colors"><ChevronLeft className="w-4 h-4" /></button>
-                          <button onClick={goToToday} className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50 border-r transition-colors">Today</button>
-                          <button onClick={nextMonth} className="p-2 hover:bg-slate-50 text-slate-600 transition-colors"><ChevronRight className="w-4 h-4" /></button>
+                          <button onClick={prevMonth} className="p-1.5 sm:p-2 hover:bg-slate-50 text-slate-600 border-r transition-colors"><ChevronLeft className="w-4 h-4" /></button>
+                          <button onClick={goToToday} className="px-2 sm:px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50 border-r transition-colors">Today</button>
+                          <button onClick={nextMonth} className="p-1.5 sm:p-2 hover:bg-slate-50 text-slate-600 transition-colors"><ChevronRight className="w-4 h-4" /></button>
                       </div>
                   </div>
               </div>
-              
+
               <div className="flex-1 overflow-auto bg-slate-100">
+                <div className="overflow-x-auto">
+                  <div className="min-w-[500px]">
                   <div className="grid grid-cols-7 border-b bg-white">
                       {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
                           <div key={d} className="py-2 text-center text-[10px] font-bold text-slate-400 uppercase tracking-widest border-r last:border-0">{d}</div>
@@ -749,6 +751,8 @@ export const CalendarPage = ({
                           );
                       })}
                   </div>
+                  </div>
+                </div>
               </div>
           </div>
       );

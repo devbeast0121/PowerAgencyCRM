@@ -710,13 +710,13 @@ export const EmailPage = ({ user, emails, contacts = [], tagGroups = [], todos =
                     {filteredEmails.map((email: any) => {
                         const contactMatch = findContactByEmail(email.senderEmail || email.sender);
                         return (
-                        <div key={email.id} onClick={() => { setSelectedEmail(email); if (!email.isRead) onUpdateEmail(email.id, { isRead: true }); }} className={`flex items-center gap-4 px-4 py-3 border-b border-slate-100 cursor-pointer hover:bg-slate-50 transition-all ${email.isRead ? 'bg-white' : 'bg-slate-50'}`}>
-                            <div className="flex items-center gap-3 shrink-0" onClick={e => e.stopPropagation()}>
-                                <input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-red-600" checked={selectedEmailIds.has(email.id)} onChange={() => handleToggleSelect(email.id)} />
+                        <div key={email.id} onClick={() => { setSelectedEmail(email); if (!email.isRead) onUpdateEmail(email.id, { isRead: true }); }} className={`flex items-center gap-2 sm:gap-4 px-2 sm:px-4 py-3 border-b border-slate-100 cursor-pointer hover:bg-slate-50 transition-all ${email.isRead ? 'bg-white' : 'bg-slate-50'}`}>
+                            <div className="flex items-center gap-2 sm:gap-3 shrink-0" onClick={e => e.stopPropagation()}>
+                                <input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-red-600 hidden sm:block" checked={selectedEmailIds.has(email.id)} onChange={() => handleToggleSelect(email.id)} />
                                 <button onClick={() => onUpdateEmail(email.id, { isStarred: !email.isStarred })} className={email.isStarred ? 'text-amber-400' : 'text-slate-300 hover:text-slate-400'}><Star className={`w-4 h-4 ${email.isStarred ? 'fill-current' : ''}`} /></button>
                             </div>
-                            <div className={`w-48 truncate text-sm flex items-center gap-2 ${email.isRead ? 'font-medium' : 'font-bold'}`}>
-                                <div 
+                            <div className={`w-24 sm:w-48 truncate text-sm flex items-center gap-2 ${email.isRead ? 'font-medium' : 'font-bold'}`}>
+                                <div
                                     className="relative shrink-0"
                                     onMouseEnter={(e) => handleProfileMouseEnter(e, { name: email.sender, email: email.senderEmail || email.sender })}
                                     onMouseLeave={handleProfileMouseLeave}
@@ -733,14 +733,14 @@ export const EmailPage = ({ user, emails, contacts = [], tagGroups = [], todos =
                                 <span className="truncate">{email.sender}</span>
                             </div>
                             <div className="flex-1 truncate text-sm flex items-center gap-2">
-                                <span className={email.isRead ? 'text-slate-700' : 'font-bold'}>{email.subject}</span>
+                                <span className={`truncate ${email.isRead ? 'text-slate-700' : 'font-bold'}`}>{email.subject}</span>
                                 {email.labels?.map((l: string) => {
                                     const s = getLabelStyles(l);
-                                    return ( <span key={l} className={`px-2 py-0.5 rounded text-[10px] font-bold ${s.className || ''}`} style={s.style}>{l}</span> );
+                                    return ( <span key={l} className={`px-2 py-0.5 rounded text-[10px] font-bold hidden sm:inline ${s.className || ''}`} style={s.style}>{l}</span> );
                                 })}
-                                <span className="text-slate-400 ml-2">— {email.snippet}</span>
+                                <span className="text-slate-400 ml-2 hidden md:inline">— {email.snippet}</span>
                             </div>
-                            <div className={`text-xs font-medium ${(selectedFolder === 'snoozed' || selectedFolder === 'scheduled') ? 'text-indigo-600 font-bold' : 'text-slate-400'}`}>
+                            <div className={`text-xs font-medium shrink-0 ${(selectedFolder === 'snoozed' || selectedFolder === 'scheduled') ? 'text-indigo-600 font-bold' : 'text-slate-400'}`}>
                                 {new Date(email.date).toLocaleDateString([], { month: 'short', day: 'numeric' })}
                             </div>
                         </div>
@@ -760,10 +760,10 @@ export const EmailPage = ({ user, emails, contacts = [], tagGroups = [], todos =
                              <button onClick={() => onUpdateEmail(selectedEmail.id, { isStarred: !selectedEmail.isStarred })} className={`p-1.5 hover:bg-slate-100 rounded transition-colors ${selectedEmail.isStarred ? 'text-amber-400' : ''}`} title="Star"><Star className={`w-4 h-4 ${selectedEmail.isStarred ? 'fill-current' : ''}`} /></button>
                          </div>
                      </div>
-                     <div className="flex-1 overflow-y-auto p-8 max-w-4xl mx-auto w-full">
+                     <div className="flex-1 overflow-y-auto p-4 sm:p-8 max-w-4xl mx-auto w-full">
                          <div className="flex flex-wrap gap-2 mb-2">{selectedEmail.labels?.map((l: string) => { const s = getLabelStyles(l); return ( <span key={l} className={`px-2 py-0.5 rounded text-[10px] font-bold ${s.className || ''}`} style={s.style}>{l}</span> ); })}</div>
-                         <h2 className="text-2xl font-bold text-slate-800 mb-6">{selectedEmail.subject}</h2>
-                         <div className="flex items-center gap-4 mb-8">
+                         <h2 className="text-xl sm:text-2xl font-bold text-slate-800 mb-4 sm:mb-6">{selectedEmail.subject}</h2>
+                         <div className="flex items-center gap-3 sm:gap-4 mb-6 sm:mb-8">
                              {(() => {
                                  const match = findContactByEmail(selectedEmail.senderEmail || selectedEmail.sender);
                                  return (
@@ -824,18 +824,18 @@ export const EmailPage = ({ user, emails, contacts = [], tagGroups = [], todos =
                         <button onClick={() => setIsMailSettingsOpen(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors"><X className="w-5 h-5 text-slate-400" /></button>
                     </div>
 
-                    <div className="flex flex-1 overflow-hidden">
+                    <div className="flex flex-col sm:flex-row flex-1 overflow-hidden">
                         {/* Sidebar */}
-                        <div className="w-56 border-r bg-slate-50/30 p-4 space-y-1">
+                        <div className="w-full sm:w-56 border-b sm:border-b-0 sm:border-r bg-slate-50/30 p-3 sm:p-4 flex sm:flex-col flex-row flex-wrap gap-1 overflow-x-auto shrink-0">
                             <button onClick={() => setSettingsTab('general')} className={`w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-all ${settingsTab === 'general' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>General</button>
                             <button onClick={() => setSettingsTab('accounts')} className={`w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-all ${settingsTab === 'accounts' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>Accounts & Import</button>
-                            <div className="pt-4 px-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">More Settings</div>
-                            <button className="w-full text-left px-3 py-2 rounded-lg text-sm font-bold text-slate-400 cursor-not-allowed opacity-60">Filters & Blocked</button>
-                            <button className="w-full text-left px-3 py-2 rounded-lg text-sm font-bold text-slate-400 cursor-not-allowed opacity-60">Forwarding & POP/IMAP</button>
+                            <div className="pt-4 px-3 text-[10px] font-black text-slate-400 uppercase tracking-widest hidden sm:block">More Settings</div>
+                            <button className="w-full text-left px-3 py-2 rounded-lg text-sm font-bold text-slate-400 cursor-not-allowed opacity-60 hidden sm:block">Filters & Blocked</button>
+                            <button className="w-full text-left px-3 py-2 rounded-lg text-sm font-bold text-slate-400 cursor-not-allowed opacity-60 hidden sm:block">Forwarding & POP/IMAP</button>
                         </div>
 
                         {/* Content Area */}
-                        <div className="flex-1 overflow-y-auto p-8 space-y-10">
+                        <div className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-8 sm:space-y-10">
                             {settingsTab === 'general' && (
                                 <>
                                     {/* Signatures Section */}
@@ -875,7 +875,7 @@ export const EmailPage = ({ user, emails, contacts = [], tagGroups = [], todos =
                                             </div>
                                         </div>
 
-                                        <div className="mt-8 pt-6 border-t grid grid-cols-2 gap-8 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
+                                        <div className="mt-8 pt-6 border-t grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-8 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
                                             <div>
                                                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">For New Emails Use</label>
                                                 <select className="w-full border rounded-lg px-3 py-2 text-xs font-bold text-slate-700 bg-white" value={signatureDefaults.newEmails} onChange={e => setSignatureDefaults({...signatureDefaults, newEmails: e.target.value})}>
