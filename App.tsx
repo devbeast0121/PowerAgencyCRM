@@ -1030,7 +1030,21 @@ ${contactTodos.filter((t: any) => !t.isDone).slice(0, 5).map((t: any) => `- ${t.
   const handleSummarizeText = async (text: string) => {
     setIsSummaryModalOpen(true); setIsSummaryLoading(true);
     try {
-        const cleanText = text.replace(/<[^>]*>?/gm, '\n').replace(/\n{3,}/g, '\n\n').trim();
+        const cleanText = text
+            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+            .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+            .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '')
+            .replace(/<!--[\s\S]*?-->/g, '')
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<\/?(p|div|tr|li|h[1-6])[^>]*>/gi, '\n')
+            .replace(/<[^>]*>?/gm, '')
+            .replace(/&nbsp;/gi, ' ')
+            .replace(/&amp;/gi, '&')
+            .replace(/&lt;/gi, '<')
+            .replace(/&gt;/gi, '>')
+            .replace(/&#\d+;/g, '')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
         const prompt = `You are an email assistant in a CRM. Summarize this email content concisely.
 
 **Email Content:**
