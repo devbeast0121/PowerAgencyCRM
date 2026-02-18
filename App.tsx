@@ -180,8 +180,6 @@ export function App() {
   // --- Team Members State ---
   const [teamMembers, setTeamMembers] = useState([
     { id: '1', name: 'You', email: 'you@company.com', role: 'Super Admin', avatar: null },
-    { id: '2', name: 'Sarah Connor', email: 'sarah@cyberdyne.net', role: 'Admin', avatar: null },
-    { id: '3', name: 'John Wick', email: 'john@continental.com', role: 'Member', avatar: null },
   ]);
 
   // Compose Modal State
@@ -212,6 +210,7 @@ export function App() {
   // Google Integration State
   const [isGoogleCalendarConnected, setIsGoogleCalendarConnected] = useState(false);
   const [googleEvents, setGoogleEvents] = useState<any[]>([]);
+  const [calendarAccessToken, setCalendarAccessToken] = useState<string | null>(null);
   const [isGoogleEmailConnected, setIsGoogleEmailConnected] = useState(false);
 
   const initAudio = () => {
@@ -258,11 +257,139 @@ export function App() {
     setIsContactModalOpen(true);
   };
 
+  // Gmail access token stored in state for API calls
+  const [gmailAccessToken, setGmailAccessToken] = useState<string | null>(null);
+
+  // Fetch real Gmail messages using the Gmail API (batched to avoid 429)
+  const fetchGmailMessages = async (accessToken: string) => {
+    if (accessToken === "mock_gmail_token") return;
+    try {
+        const listRes = await fetch('https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=20', {
+            headers: { 'Authorization': `Bearer ${accessToken}` }
+        });
+        if (!listRes.ok) throw new Error(`Gmail list error: ${listRes.statusText}`);
+        const listData = await listRes.json();
+        if (!listData.messages || listData.messages.length === 0) { setEmails([]); return; }
+
+        // Fetch in batches of 5 with 300ms delay between batches to avoid 429
+        const BATCH_SIZE = 5;
+        const messages: any[] = [];
+        for (let i = 0; i < listData.messages.length; i += BATCH_SIZE) {
+            if (i > 0) await new Promise(r => setTimeout(r, 300));
+            const batch = listData.messages.slice(i, i + BATCH_SIZE);
+            const batchResults = await Promise.all(
+                batch.map((msg: any) =>
+                    fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=full`, {
+                        headers: { 'Authorization': `Bearer ${accessToken}` }
+                    }).then(res => res.ok ? res.json() : null).catch(() => null)
+                )
+            );
+            messages.push(...batchResults.filter(Boolean));
+        }
+
+        const parsed = messages.filter((msg: any) => msg.payload).map((msg: any) => {
+            const headers = msg.payload?.headers || [];
+            const getHeader = (name: string) => headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase())?.value || '';
+            const from = getHeader('From');
+            const subject = getHeader('Subject');
+            const date = getHeader('Date');
+            const to = getHeader('To');
+
+            const fromMatch = from.match(/^(.+?)\s*<(.+?)>$/);
+            const senderName = fromMatch ? fromMatch[1].replace(/"/g, '') : from;
+            const senderEmail = fromMatch ? fromMatch[2] : from;
+
+            let body = '';
+            const decodeBase64Utf8 = (base64url: string): string => {
+                const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+                const binary = atob(base64);
+                const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
+                return new TextDecoder('utf-8').decode(bytes);
+            };
+            const getBody = (payload: any): string => {
+                if (payload.body?.data) {
+                    return decodeBase64Utf8(payload.body.data);
+                }
+                if (payload.parts) {
+                    const htmlPart = payload.parts.find((p: any) => p.mimeType === 'text/html');
+                    const textPart = payload.parts.find((p: any) => p.mimeType === 'text/plain');
+                    const multiPart = payload.parts.find((p: any) => p.mimeType?.startsWith('multipart/'));
+                    if (htmlPart) return getBody(htmlPart);
+                    if (textPart) return getBody(textPart);
+                    if (multiPart) return getBody(multiPart);
+                }
+                return '';
+            };
+            body = getBody(msg.payload);
+
+            const labelIds = msg.labelIds || [];
+            let folder = 'inbox';
+            if (labelIds.includes('SENT')) folder = 'sent';
+            else if (labelIds.includes('DRAFT')) folder = 'drafts';
+            else if (labelIds.includes('TRASH')) folder = 'trash';
+            else if (labelIds.includes('SPAM')) folder = 'spam';
+
+            return {
+                id: msg.id, threadId: msg.threadId,
+                sender: senderName, senderEmail, to,
+                subject: subject || '(No Subject)',
+                snippet: msg.snippet || '', body,
+                date: new Date(date),
+                isRead: !labelIds.includes('UNREAD'),
+                isStarred: labelIds.includes('STARRED'),
+                folder,
+                labels: labelIds.filter((l: string) => !['UNREAD', 'STARRED', 'INBOX', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'IMPORTANT', 'CATEGORY_PERSONAL', 'CATEGORY_SOCIAL', 'CATEGORY_PROMOTIONS', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS'].includes(l))
+            };
+        }).sort((a: any, b: any) => b.date.getTime() - a.date.getTime());
+
+        setEmails(parsed);
+    } catch (error) { console.error('Failed to fetch Gmail messages:', error); }
+  };
+
+  // Send email via Gmail API
+  const sendGmailMessage = async (to: string, subject: string, htmlBody: string) => {
+    if (!gmailAccessToken || gmailAccessToken === "mock_gmail_token") return false;
+    try {
+        const rawMessage = [
+            `To: ${to}`,
+            `Subject: ${subject}`,
+            'Content-Type: text/html; charset=utf-8',
+            'MIME-Version: 1.0',
+            '',
+            htmlBody
+        ].join('\r\n');
+
+        const encoded = btoa(unescape(encodeURIComponent(rawMessage)))
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+
+        const response = await fetch('https://www.googleapis.com/gmail/v1/users/me/messages/send', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${gmailAccessToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ raw: encoded })
+        });
+        if (!response.ok) throw new Error(`Gmail send error: ${response.statusText}`);
+        // Refresh inbox after sending
+        await fetchGmailMessages(gmailAccessToken);
+        return true;
+    } catch (error) { console.error('Failed to send Gmail message:', error); return false; }
+  };
+
   const handleConnectGoogle = async () => {
       try {
-          await signInWithGoogle();
-          setIsGoogleEmailConnected(true);
-      } catch (e) { }
+          const result = await signInWithGoogle();
+          const accessToken = result.credential?.accessToken;
+          if (accessToken) {
+              setGmailAccessToken(accessToken);
+              setIsGoogleEmailConnected(true);
+              // Fetch real emails if not in mock mode
+              await fetchGmailMessages(accessToken);
+          }
+      } catch (e) { console.error('Gmail connect error:', e); }
   };
 
   const handleConnectGoogleCalendar = async () => {
@@ -270,6 +397,7 @@ export function App() {
         const result = await signInWithGoogleCalendar();
         const accessToken = result.credential?.accessToken;
         if (accessToken === "mock_access_token") {
+            setCalendarAccessToken(accessToken);
             setIsGoogleCalendarConnected(true);
             const today = new Date();
             setGoogleEvents([
@@ -279,9 +407,12 @@ export function App() {
             return;
         }
         if (!accessToken) return;
+        setCalendarAccessToken(accessToken);
         const timeMin = new Date();
         timeMin.setMonth(timeMin.getMonth() - 1);
-        const response = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin.toISOString()}&singleEvents=true&orderBy=startTime`, {
+        const timeMax = new Date();
+        timeMax.setMonth(timeMax.getMonth() + 3);
+        const response = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin.toISOString()}&timeMax=${timeMax.toISOString()}&maxResults=250&singleEvents=true&orderBy=startTime`, {
             headers: { 'Authorization': `Bearer ${accessToken}` }
         });
         if (!response.ok) throw new Error(`Google API Error: ${response.statusText}`);
@@ -293,8 +424,8 @@ export function App() {
                 return {
                     id: item.id,
                     title: item.summary || '(No Title)',
-                    start: start,
-                    end: end,
+                    start,
+                    end,
                     source: 'google',
                     color: 'bg-green-100 text-green-700 border-green-200'
                 };
@@ -302,12 +433,48 @@ export function App() {
             setGoogleEvents(mappedEvents);
             setIsGoogleCalendarConnected(true);
         }
-    } catch (error) { }
+    } catch (error) { console.error('Google Calendar connect error:', error); }
+  };
+
+  // Create event in Google Calendar when booking from CRM
+  const handleCreateGoogleCalendarEvent = async (eventData: { summary: string, description?: string, startTime: Date, endTime: Date, attendeeEmail?: string }) => {
+    if (!calendarAccessToken || calendarAccessToken === "mock_access_token") return;
+    try {
+        const body: any = {
+            summary: eventData.summary,
+            description: eventData.description || '',
+            start: { dateTime: eventData.startTime.toISOString() },
+            end: { dateTime: eventData.endTime.toISOString() },
+        };
+        if (eventData.attendeeEmail) {
+            body.attendees = [{ email: eventData.attendeeEmail }];
+        }
+        const response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=all', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${calendarAccessToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(body)
+        });
+        if (!response.ok) throw new Error(`Google Calendar create error: ${response.statusText}`);
+        const created = await response.json();
+        // Add to local state immediately
+        setGoogleEvents(prev => [...prev, {
+            id: created.id,
+            title: created.summary || eventData.summary,
+            start: new Date(eventData.startTime),
+            end: new Date(eventData.endTime),
+            source: 'google',
+            color: 'bg-green-100 text-green-700 border-green-200'
+        }]);
+    } catch (error) { console.error('Failed to create Google Calendar event:', error); }
   };
 
   const handleDisconnectGoogleCalendar = () => {
       setIsGoogleCalendarConnected(false);
       setGoogleEvents([]);
+      setCalendarAccessToken(null);
   };
 
   useEffect(() => {
@@ -532,7 +699,24 @@ export function App() {
 
   const handleAddScheduledEvent = async (eventData: any) => {
     if (!user) return;
-    try { await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'scheduled_events'), { ...eventData, createdAt: serverTimestamp() }); } catch (e) { }
+    try {
+        await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'scheduled_events'), { ...eventData, createdAt: serverTimestamp() });
+        // Also create in Google Calendar if connected
+        if (isGoogleCalendarConnected && calendarAccessToken && eventData.startTime) {
+            const startDate = eventData.startTime.seconds
+                ? new Date(eventData.startTime.seconds * 1000)
+                : new Date(eventData.startTime);
+            const durationMin = parseInt(eventData.duration || '30', 10);
+            const endDate = new Date(startDate.getTime() + durationMin * 60000);
+            await handleCreateGoogleCalendarEvent({
+                summary: `${eventData.eventTypeTitle || 'Meeting'} - ${eventData.attendeeName || ''}`.trim(),
+                description: eventData.notes || '',
+                startTime: startDate,
+                endTime: endDate,
+                attendeeEmail: eventData.attendeeEmail
+            });
+        }
+    } catch (e) { console.error('Failed to add scheduled event:', e); }
   };
 
   const handleSeedData = async () => {
@@ -631,25 +815,43 @@ export function App() {
       setComposeTo(initialData.to || ''); setComposeSubject(initialData.subject || ''); setComposeBody(initialData.body || ''); setShowCcBcc(!!initialData.cc || !!initialData.bcc); setIsComposeOpen(true); setIsComposeMinimized(false); setComposeAttachments([]);
   };
 
-  const handleComposeSubmit = (e: React.FormEvent, isScheduled: boolean = false, scheduledAt: Date | null = null) => {
+  const handleComposeSubmit = async (e: React.FormEvent, isScheduled: boolean = false, scheduledAt: Date | null = null) => {
       if (e) e.preventDefault();
       setIsComposeOpen(false);
-      const newEmail = { 
-          id: `sent-${Date.now()}`, 
-          sender: "Me", 
-          senderEmail: user?.email || "me@example.com", 
-          subject: composeSubject, 
-          snippet: composeBody.replace(/<[^>]*>?/gm, '').substring(0, 50), 
-          body: composeBody, 
-          date: isScheduled ? scheduledAt : new Date(), 
-          isRead: true, 
-          isStarred: false, 
-          folder: isScheduled ? 'scheduled' : 'sent', 
+
+      // Try to send via Gmail API if connected
+      if (isGoogleEmailConnected && gmailAccessToken && gmailAccessToken !== "mock_gmail_token" && !isScheduled) {
+          const sent = await sendGmailMessage(composeTo, composeSubject, composeBody);
+          if (sent) {
+              // CRM activity tracking
+              const recipientContact = contacts.find(c => c.email === composeTo || (c.emails && c.emails.some((em: any) => em.value === composeTo)));
+              if (recipientContact) {
+                  handleAddNote(recipientContact.id, `Sent email: ${composeSubject}`, 'Email');
+                  handleUpdateContact(recipientContact.id, { lastContact: { date: new Date().toLocaleDateString(), type: 'Email' }});
+              }
+              setComposeBody(''); setComposeTo(''); setComposeSubject(''); setShowCcBcc(false); setComposeAttachments([]);
+              return;
+          }
+          // If Gmail send failed, fall through to local mock
+      }
+
+      // Fallback: local email state (mock mode or scheduled)
+      const newEmail = {
+          id: `sent-${Date.now()}`,
+          sender: "Me",
+          senderEmail: user?.email || "me@example.com",
+          subject: composeSubject,
+          snippet: composeBody.replace(/<[^>]*>?/gm, '').substring(0, 50),
+          body: composeBody,
+          date: isScheduled ? scheduledAt : new Date(),
+          isRead: true,
+          isStarred: false,
+          folder: isScheduled ? 'scheduled' : 'sent',
           attachments: composeAttachments,
           scheduledDate: isScheduled ? scheduledAt?.toISOString() : null
       };
       setEmails(prev => [newEmail, ...prev]);
-      const recipientContact = contacts.find(c => c.email === composeTo || (c.emails && c.emails.some((e: any) => e.value === composeTo)));
+      const recipientContact = contacts.find(c => c.email === composeTo || (c.emails && c.emails.some((em: any) => em.value === composeTo)));
       if (recipientContact) {
           handleAddNote(recipientContact.id, isScheduled ? `Scheduled email for ${scheduledAt?.toLocaleString()}: ${composeSubject}` : `Sent email: ${composeSubject}`, 'Email');
           handleUpdateContact(recipientContact.id, { lastContact: { date: new Date().toLocaleDateString(), type: 'Email' }});
@@ -657,14 +859,53 @@ export function App() {
       setComposeBody(''); setComposeTo(''); setComposeSubject(''); setShowCcBcc(false); setComposeAttachments([]);
   };
 
-  const handleUpdateEmail = (ids: string | string[], updates: any) => { 
+  const handleUpdateEmail = async (ids: string | string[], updates: any) => {
     const idArray = Array.isArray(ids) ? ids : [ids];
-    setEmails(prev => prev.map(email => idArray.includes(email.id) ? { ...email, ...updates } : email)); 
+    // Update local state immediately
+    setEmails(prev => prev.map(email => idArray.includes(email.id) ? { ...email, ...updates } : email));
+
+    // Sync with Gmail API if connected
+    if (isGoogleEmailConnected && gmailAccessToken && gmailAccessToken !== "mock_gmail_token") {
+        for (const id of idArray) {
+            // Skip local mock IDs
+            if (id.startsWith('sent-') || id.startsWith('email-')) continue;
+            try {
+                const addLabels: string[] = [];
+                const removeLabels: string[] = [];
+                if (updates.isRead === true) removeLabels.push('UNREAD');
+                if (updates.isRead === false) addLabels.push('UNREAD');
+                if (updates.isStarred === true) addLabels.push('STARRED');
+                if (updates.isStarred === false) removeLabels.push('STARRED');
+                if (updates.folder === 'trash') addLabels.push('TRASH');
+                if (updates.folder === 'archive') removeLabels.push('INBOX');
+                if (addLabels.length > 0 || removeLabels.length > 0) {
+                    await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}/modify`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${gmailAccessToken}`, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ addLabelIds: addLabels, removeLabelIds: removeLabels })
+                    });
+                }
+            } catch (error) { console.error('Gmail modify error:', error); }
+        }
+    }
   };
-  
-  const handleDeleteEmail = (ids: string | string[]) => { 
+
+  const handleDeleteEmail = async (ids: string | string[]) => {
     const idArray = Array.isArray(ids) ? ids : [ids];
-    setEmails(prev => prev.filter(email => !idArray.includes(email.id))); 
+    setEmails(prev => prev.filter(email => !idArray.includes(email.id)));
+
+    // Trash in Gmail API if connected
+    if (isGoogleEmailConnected && gmailAccessToken && gmailAccessToken !== "mock_gmail_token") {
+        for (const id of idArray) {
+            if (id.startsWith('sent-') || id.startsWith('email-')) continue;
+            try {
+                await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}/trash`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${gmailAccessToken}` }
+                });
+            } catch (error) { console.error('Gmail trash error:', error); }
+        }
+    }
   };
 
   const handleStartLiveCall = async (contactId: string) => {
@@ -713,7 +954,24 @@ export function App() {
             config: {
                 responseModalities: [Modality.AUDIO],
                 speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
-                systemInstruction: `You are a world-class CRM analyst briefing a user about their client: ${contact.name}.`
+                systemInstruction: (() => {
+                    const contactNotes = notes.filter((n: any) => n.contactId === contactId);
+                    const contactEmails = emails.filter((e: any) => e.senderEmail === contact.email || e.to === contact.email);
+                    const contactTodos = (todos || []).filter((t: any) => t.contactId === contactId && !t.isDone);
+                    return `You are a world-class CRM analyst having a live voice conversation with the user. You are briefing them about their client.
+
+**Contact:** ${contact.name} (${contact.type || 'Person'})
+**Company:** ${contact.company || 'N/A'} | **Title:** ${contact.title || 'N/A'}
+**Status:** ${contact.status || 'N/A'} | **Stage:** ${contact.lifecycleStage || 'N/A'}
+**Email:** ${contact.email || 'N/A'} | **Phone:** ${contact.phone || 'N/A'}
+**Last Contact:** ${contact.lastContact ? `${contact.lastContact.date} via ${contact.lastContact.type}` : 'No previous contact'}
+
+**Recent Notes:** ${contactNotes.slice(0, 5).map((n: any) => `[${n.type}] ${n.content}`).join(' | ') || 'None'}
+**Recent Emails:** ${contactEmails.slice(0, 3).map((e: any) => `"${e.subject}"`).join(', ') || 'None'}
+**Open Tasks:** ${contactTodos.slice(0, 3).map((t: any) => t.text).join(', ') || 'None'}
+
+Be conversational, concise, and helpful. Answer questions about this contact using the data above. Suggest next steps when appropriate.`;
+                })()
             }
         });
         liveSessionRef.current = sessionPromise;
@@ -736,19 +994,54 @@ export function App() {
     setIsSummaryModalOpen(true); setIsSummaryLoading(true);
     try {
         const contact = contacts.find((c: any) => c.id === contactId);
+        if (!contact) { setSummaryText("Contact not found."); setIsSummaryLoading(false); return; }
+        const contactNotes = notes.filter((n: any) => n.contactId === contactId);
+        const contactEmails = emails.filter((e: any) => e.senderEmail === contact.email || e.to === contact.email || (contact.emails && contact.emails.some((em: any) => e.senderEmail === em.value || e.to === em.value)));
+        const contactTodos = (todos || []).filter((t: any) => t.contactId === contactId);
+
+        const prompt = `You are a CRM analyst. Provide a concise, actionable summary of this contact.
+
+**Contact:** ${contact.name}
+**Type:** ${contact.type || 'Person'}
+**Company:** ${contact.company || 'N/A'}
+**Title:** ${contact.title || 'N/A'}
+**Status:** ${contact.status || 'N/A'} | **Stage:** ${contact.lifecycleStage || 'N/A'}
+**Email:** ${contact.email || 'N/A'} | **Phone:** ${contact.phone || 'N/A'}
+**Groups:** ${contact.groups?.join(', ') || 'None'}
+**Last Contact:** ${contact.lastContact ? `${contact.lastContact.date} (${contact.lastContact.type})` : 'Never'}
+
+**Activity Notes (${contactNotes.length}):**
+${contactNotes.slice(0, 10).map((n: any) => `- [${n.type}] ${n.content}`).join('\n') || 'No notes.'}
+
+**Recent Emails (${contactEmails.length}):**
+${contactEmails.slice(0, 5).map((e: any) => `- ${e.folder === 'sent' ? 'Sent' : 'Received'}: "${e.subject}" (${new Date(e.date).toLocaleDateString()})`).join('\n') || 'No emails.'}
+
+**Open Tasks (${contactTodos.filter((t: any) => !t.isDone).length}):**
+${contactTodos.filter((t: any) => !t.isDone).slice(0, 5).map((t: any) => `- ${t.text}${t.dueDate ? ' (Due: ' + t.dueDate + ')' : ''}`).join('\n') || 'No open tasks.'}
+
+**Instructions:** Provide a 3-4 paragraph summary covering: (1) Who they are and relationship status, (2) Key interactions and sentiment, (3) Recommended next steps. Be specific, cite activity details.`;
+
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: `Summarize: ${contact?.name}` });
+        const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt, config: { thinkingConfig: { thinkingBudget: 0 } } });
         setSummaryText(response.text || "No summary.");
-    } catch (error) { } finally { setIsSummaryLoading(false); }
+    } catch (error) { setSummaryText("Unable to generate summary. Please check your API key."); } finally { setIsSummaryLoading(false); }
   };
 
   const handleSummarizeText = async (text: string) => {
     setIsSummaryModalOpen(true); setIsSummaryLoading(true);
     try {
+        const cleanText = text.replace(/<[^>]*>?/gm, '\n').replace(/\n{3,}/g, '\n\n').trim();
+        const prompt = `You are an email assistant in a CRM. Summarize this email content concisely.
+
+**Email Content:**
+${cleanText.substring(0, 3000)}
+
+**Instructions:** Provide: (1) A one-line TL;DR, (2) Key points as bullet points, (3) Any action items or requests mentioned. Keep it brief and professional.`;
+
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: `Summarize: ${text}` });
+        const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt, config: { thinkingConfig: { thinkingBudget: 0 } } });
         setSummaryText(response.text || "No summary.");
-    } catch (error) { setSummaryText("Unable to summarize."); } finally { setIsSummaryLoading(false); }
+    } catch (error) { setSummaryText("Unable to summarize. Please check your API key."); } finally { setIsSummaryLoading(false); }
   };
 
   const handleSpeak = async (text: string) => {
@@ -896,7 +1189,7 @@ export function App() {
                     </div>
                   )}
                   {selectedContactId && selectedContact ? (
-                      <ContactDetail contact={selectedContact} allContacts={contacts} notes={notes.filter(n => n.contactId === selectedContactId)} emails={emails} onClose={() => setSelectedContactId(null)} onUpdate={handleUpdateContact} onDelete={handleDeleteContact} onAddNote={handleAddNote} onUpdateNote={handleUpdateNote} onDeleteNote={handleDeleteNote} onNavigate={(id: string) => { setSelectedContactId(id); setView('contacts'); }} onViewEmail={(emailId: string) => { setInitialSelectedEmailId(emailId); setView('email'); setSelectedContactId(null); }} tagGroups={tagGroups} onAddNewGroup={() => setIsGroupModalOpen(true)} user={user} onGroupClick={handleGroupClick} onCreateLinkedCompany={handleOpenCreateCompanyModal} onCreateCompany={handleAddContact} onCompose={handleCompose} onGenerateSummary={handleGenerateContactSummary} pipelines={pipelines} liveCallProps={liveCallProps} />
+                      <ContactDetail contact={selectedContact} allContacts={contacts} notes={notes.filter(n => n.contactId === selectedContactId)} emails={emails} onClose={() => setSelectedContactId(null)} onUpdate={handleUpdateContact} onDelete={handleDeleteContact} onAddNote={handleAddNote} onUpdateNote={handleUpdateNote} onDeleteNote={handleDeleteNote} onNavigate={(id: string) => { setSelectedContactId(id); setView('contacts'); }} onViewEmail={(emailId: string) => { setInitialSelectedEmailId(emailId); setView('email'); setSelectedContactId(null); }} tagGroups={tagGroups} onAddNewGroup={() => setIsGroupModalOpen(true)} user={user} onGroupClick={handleGroupClick} onCreateLinkedCompany={handleOpenCreateCompanyModal} onCreateCompany={handleAddContact} onCompose={handleCompose} onGenerateSummary={handleGenerateContactSummary} pipelines={pipelines} liveCallProps={liveCallProps} onSpeak={handleSpeak} isSpeaking={isSpeaking} />
                   ) : (
                     view === 'contacts' && (
                         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-1">
@@ -1108,6 +1401,43 @@ export function App() {
                     </div>
                 </div>
             </div>
+        )}
+
+        {isSummaryModalOpen && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[400] backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-100">
+              <div className="p-5 border-b flex justify-between items-center bg-gradient-to-r from-indigo-50 to-emerald-50">
+                <h3 className="font-bold text-slate-800 flex items-center gap-2"><Sparkles className="w-4 h-4 text-indigo-600" /> AI Summary</h3>
+                <button onClick={() => setIsSummaryModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-white/60 transition-colors"><X className="w-5 h-5" /></button>
+              </div>
+              <div className="p-6 max-h-[60vh] overflow-y-auto">
+                {isSummaryLoading ? (
+                  <div className="py-16 flex flex-col items-center justify-center gap-4">
+                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-emerald-500 flex items-center justify-center shadow-lg shadow-indigo-200">
+                      <Sparkles className="w-6 h-6 text-white animate-pulse" />
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm font-bold text-slate-700">Analyzing with AI</p>
+                      <p className="text-xs text-slate-400 mt-1">This usually takes a few seconds...</p>
+                    </div>
+                    <div className="flex gap-1 mt-2">
+                      <div className="w-2 h-2 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                      <div className="w-2 h-2 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                      <div className="w-2 h-2 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="prose prose-sm max-w-none text-slate-700 leading-relaxed" dangerouslySetInnerHTML={{ __html: summaryText.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/^\* (.+)$/gm, '<li>$1</li>').replace(/(<li>.*<\/li>)/s, '<ul class="list-disc pl-4 space-y-1 my-2">$1</ul>').replace(/\n{2,}/g, '</p><p class="mt-3">').replace(/\n/g, '<br/>') }} />
+                )}
+              </div>
+              {!isSummaryLoading && summaryText && (
+                <div className="p-4 border-t bg-slate-50 flex justify-between items-center">
+                  <button onClick={() => { navigator.clipboard.writeText(summaryText); }} className="text-xs font-medium text-slate-500 hover:text-slate-700 flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-white transition-colors"><Copy className="w-3.5 h-3.5" /> Copy</button>
+                  <button onClick={() => handleSpeak(summaryText)} className={`text-xs font-bold flex items-center gap-1.5 px-4 py-2 rounded-lg transition-all ${isSpeaking ? 'bg-indigo-600 text-white animate-pulse' : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'}`}>{isSpeaking ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Stop</> : <><Mic className="w-3.5 h-3.5" /> Listen</>}</button>
+                </div>
+              )}
+            </div>
+          </div>
         )}
 
         {isContactModalOpen && (

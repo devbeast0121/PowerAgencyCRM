@@ -67,25 +67,25 @@ if (!isMock) {
   signInWithEmailAndPassword = _signInWithEmailAndPassword;
   signOut = _signOut;
 
-  // Real Google Sign In with Calendar Scope
+  // Real Google Sign In with Calendar Scope (read + write)
   signInWithGoogleCalendar = async () => {
     const provider = new GoogleAuthProvider();
-    provider.addScope('https://www.googleapis.com/auth/calendar.events.readonly');
+    provider.addScope('https://www.googleapis.com/auth/calendar.events');
     const result = await signInWithPopup(auth, provider);
-    return { 
-        user: result.user, 
-        credential: GoogleAuthProvider.credentialFromResult(result) 
+    return {
+        user: result.user,
+        credential: GoogleAuthProvider.credentialFromResult(result)
     };
   };
 
-  // General Google Sign In (Updated to include Gmail scopes for potential real integration)
+  // General Google Sign In (with Gmail scopes for real integration)
   signInWithGoogle = async () => {
       const provider = new GoogleAuthProvider();
-      // Add Gmail scopes
       provider.addScope('https://www.googleapis.com/auth/gmail.readonly');
       provider.addScope('https://www.googleapis.com/auth/gmail.send');
       const result = await signInWithPopup(auth, provider);
-      return result.user;
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      return { user: result.user, credential };
   };
 
   
@@ -145,7 +145,8 @@ if (!isMock) {
 
   signInWithGoogle = async () => {
       const user = { uid: 'google-' + Math.random(), displayName: 'Google User', email: 'test@gmail.com', photoURL: null };
-      return setMockUser(user, auth);
+      setMockUser(user, auth);
+      return { user, credential: { accessToken: "mock_gmail_token" } };
   };
 
 

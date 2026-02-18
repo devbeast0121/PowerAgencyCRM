@@ -221,9 +221,9 @@ export const Dashboard = ({ contacts, notes, todos, emails, scheduledEvents, set
                                     <span>{briefing}</span>
                                 </div>
                             )}
-                            <div className={`prose prose-sm max-w-none font-medium leading-relaxed whitespace-pre-wrap ${briefing?.includes("quota") ? 'text-red-700' : 'text-slate-700'}`}>
-                                {briefing || "No summary available. Click 'Generate Briefing' above to analyze your CRM data."}
-                            </div>
+                            <div className={`prose prose-sm max-w-none font-medium leading-relaxed ${briefing?.includes("quota") ? 'text-red-700' : 'text-slate-700'}`}
+                                dangerouslySetInnerHTML={{ __html: (briefing || "No summary available. Click 'Generate Briefing' above to analyze your CRM data.").replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/^\* (.+)$/gm, '<li>$1</li>').replace(/(<li>.*<\/li>)/s, '<ul class="list-disc pl-4 space-y-1 my-2">$1</ul>').replace(/\n{2,}/g, '</p><p class="mt-3">').replace(/\n/g, '<br/>') }}
+                            />
                             {briefing && !isSpeaking && !briefing.includes("Retrying") && !briefing.includes("quota") && (
                                 <button 
                                     onClick={() => onSpeak(briefing)}

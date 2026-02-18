@@ -218,7 +218,7 @@ const GeminiPanel = ({ isOpen, onClose, contacts, todos, scheduledEvents, select
     );
 };
 
-export const EmailPage = ({ user, emails, contacts = [], tagGroups = [], todos = [], scheduledEvents = [], initialSelectedEmailId, onClearInitialEmailId, onCompose, onUpdateEmail, onDeleteEmail, isGoogleConnected, onConnectGoogle, onNavigateContact, onBookMeeting, onOpenAddContact }: any) => {
+export const EmailPage = ({ user, emails, contacts = [], tagGroups = [], todos = [], scheduledEvents = [], initialSelectedEmailId, onClearInitialEmailId, onCompose, onUpdateEmail, onDeleteEmail, isGoogleConnected, onConnectGoogle, onNavigateContact, onBookMeeting, onOpenAddContact, onSummarize }: any) => {
   const [selectedFolder, setSelectedFolder] = useState('inbox');
   const [selectedEmail, setSelectedEmail] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -526,7 +526,7 @@ export const EmailPage = ({ user, emails, contacts = [], tagGroups = [], todos =
                     {isCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                 </button>
             )}
-            <button onClick={() => { setSelectedFolder(id); setSelectedEmail(null); setIsMobileSidebarOpen(false); }} className={`w-full flex items-center justify-between px-6 py-2.5 text-sm font-medium rounded-r-full transition-colors ${selectedFolder === id ? 'bg-red-50 text-red-600' : 'text-slate-600 hover:bg-slate-100'}`} style={{ paddingLeft: `${1.5 + (depth * 0.75) + (isLabel ? 0.6 : 0)}rem` }}>
+            <div role="button" tabIndex={0} onClick={() => { setSelectedFolder(id); setSelectedEmail(null); setIsMobileSidebarOpen(false); }} className={`w-full flex items-center justify-between px-6 py-2.5 text-sm font-medium rounded-r-full transition-colors cursor-pointer ${selectedFolder === id ? 'bg-red-50 text-red-600' : 'text-slate-600 hover:bg-slate-100'}`} style={{ paddingLeft: `${1.5 + (depth * 0.75) + (isLabel ? 0.6 : 0)}rem` }}>
                 <div className="flex items-center gap-3 shrink-0 truncate">
                     {Icon ? <Icon className="w-4 h-4 shrink-0" /> : (
                       <div className="flex items-center gap-2 shrink-0">
@@ -539,16 +539,16 @@ export const EmailPage = ({ user, emails, contacts = [], tagGroups = [], todos =
                 <div className="flex items-center shrink-0">
                     {isLabel && (
                         <div className="hidden group-hover/item:flex items-center mr-2 gap-1">
-                            <button 
-                                onClick={(e) => handleStartEditLabel(e, labelData)} 
-                                className="p-1 text-slate-400 hover:text-blue-600 hover:bg-white rounded transition-all" 
+                            <button
+                                onClick={(e) => { e.stopPropagation(); handleStartEditLabel(e, labelData); }}
+                                className="p-1 text-slate-400 hover:text-blue-600 hover:bg-white rounded transition-all"
                                 title="Edit Label"
                             >
                                 <Edit2 className="w-3 h-3" />
                             </button>
-                            <button 
-                                onClick={(e) => { e.stopPropagation(); handleDeleteLabel(labelData.name); }} 
-                                className="p-1 text-slate-400 hover:text-red-600 hover:bg-white rounded transition-all" 
+                            <button
+                                onClick={(e) => { e.stopPropagation(); handleDeleteLabel(labelData.name); }}
+                                className="p-1 text-slate-400 hover:text-red-600 hover:bg-white rounded transition-all"
                                 title="Delete Label"
                             >
                                 <Trash2 className="w-3 h-3" />
@@ -557,7 +557,7 @@ export const EmailPage = ({ user, emails, contacts = [], tagGroups = [], todos =
                     )}
                     {count > 0 && <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${selectedFolder === id ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-500'}`}>{count}</span>}
                 </div>
-            </button>
+            </div>
         </div>
     );
   };
@@ -790,9 +790,26 @@ export const EmailPage = ({ user, emails, contacts = [], tagGroups = [], todos =
                                  </div>
                                  <div className="text-xs text-slate-500">{new Date(selectedEmail.date).toLocaleString()}</div>
                              </div>
-                             <div className="flex items-center gap-2"><button onClick={() => onCompose({ to: selectedEmail.senderEmail, subject: `Re: ${selectedEmail.subject}`, body: `<br/><br/>On ${new Date(selectedEmail.date).toLocaleString()}, ${selectedEmail.sender} wrote:<br/><blockquote>${selectedEmail.body}</blockquote>` })} className="p-2 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors" title="Reply"><ReplyAll className="w-4 h-4 mirror" /></button></div>
+                             <div className="flex items-center gap-2">
+                                 {onSummarize && <button onClick={() => onSummarize(selectedEmail.body || selectedEmail.snippet)} className="p-2 border border-indigo-200 rounded-lg hover:bg-indigo-50 text-indigo-600 transition-colors flex items-center gap-1.5" title="AI Summarize"><Sparkles className="w-4 h-4" /><span className="text-xs font-bold hidden sm:inline">Summarize</span></button>}
+                                 <button onClick={() => onCompose({ to: selectedEmail.senderEmail, subject: `Re: ${selectedEmail.subject}`, body: `<br/><br/>On ${new Date(selectedEmail.date).toLocaleString()}, ${selectedEmail.sender} wrote:<br/><blockquote>${selectedEmail.body}</blockquote>` })} className="p-2 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors" title="Reply"><ReplyAll className="w-4 h-4 mirror" /></button>
+                             </div>
                          </div>
-                         <div className="text-slate-700 prose max-w-none bg-white p-6 rounded-2xl border border-slate-100 shadow-sm" dangerouslySetInnerHTML={{ __html: selectedEmail.body }} />
+                         <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                             <iframe
+                                 srcDoc={`<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;padding:24px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;color:#334155;line-height:1.6;overflow-x:hidden;}img{max-width:100%;height:auto;}a{color:#4f46e5;}</style></head><body>${selectedEmail.body}</body></html>`}
+                                 className="w-full border-0"
+                                 style={{ minHeight: '300px' }}
+                                 onLoad={(e) => {
+                                     const iframe = e.target as HTMLIFrameElement;
+                                     if (iframe.contentDocument?.body) {
+                                         iframe.style.height = iframe.contentDocument.body.scrollHeight + 40 + 'px';
+                                     }
+                                 }}
+                                 sandbox="allow-same-origin"
+                                 title="Email content"
+                             />
+                         </div>
                      </div>
                  </div>
             )}

@@ -548,7 +548,17 @@ export const CalendarPage = ({
 
   const renderMeetings = () => {
       const now = new Date();
-      let filtered = [...(scheduledEvents || [])];
+      // Merge Google Calendar events into the list with a compatible format
+      const googleAsCrm = (googleEvents || []).map((e: any) => ({
+          id: e.id,
+          attendeeName: e.title,
+          eventTypeTitle: 'Google Calendar',
+          startTime: { seconds: Math.floor(new Date(e.start).getTime() / 1000) },
+          duration: e.end ? Math.round((new Date(e.end).getTime() - new Date(e.start).getTime()) / 60000).toString() : '60',
+          color: 'bg-green-500',
+          source: 'google',
+      }));
+      let filtered = [...(scheduledEvents || []), ...googleAsCrm];
       
       if (meetingsFilter === 'today') {
           const todayStr = new Date().toDateString();
@@ -692,8 +702,11 @@ export const CalendarPage = ({
                           
                           const dStr = date.toDateString();
                           const isToday = new Date().toDateString() === dStr;
-                          const dayEvents = (scheduledEvents || []).filter((e: any) => 
+                          const dayEvents = (scheduledEvents || []).filter((e: any) =>
                               e.startTime && new Date(e.startTime.seconds * 1000).toDateString() === dStr
+                          );
+                          const dayGoogleEvents = (googleEvents || []).filter((e: any) =>
+                              e.start && new Date(e.start).toDateString() === dStr
                           );
 
                           return (
@@ -704,14 +717,25 @@ export const CalendarPage = ({
                                       </span>
                                   </div>
                                   <div className="flex-1 overflow-y-auto space-y-1 no-scrollbar">
-                                      {dayEvents.map((event: any) => (
-                                          <button 
+                                      {dayGoogleEvents.map((event: any) => (
+                                          <button
                                               key={event.id}
-                                              onClick={() => { 
-                                                  setViewingMeeting(event); 
-                                                  setNoteContent(event.notes || ''); 
-                                                  setIsAddingNote(false); 
-                                                  setIsCancelling(false); 
+                                              onClick={() => { setViewingMeeting(event); setIsCancelling(false); }}
+                                              className="w-full text-left p-1.5 rounded border text-[10px] font-bold truncate bg-green-50 border-green-200 text-green-700 shadow-sm transition-all hover:brightness-95 cursor-pointer"
+                                              title={`${new Date(event.start).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} - ${event.title}`}
+                                          >
+                                              <span className="opacity-70 mr-1.5">{new Date(event.start).toLocaleTimeString([], {hour:'numeric', minute:'2-digit', hour12: false})}</span>
+                                              {event.title}
+                                          </button>
+                                      ))}
+                                      {dayEvents.map((event: any) => (
+                                          <button
+                                              key={event.id}
+                                              onClick={() => {
+                                                  setViewingMeeting(event);
+                                                  setNoteContent(event.notes || '');
+                                                  setIsAddingNote(false);
+                                                  setIsCancelling(false);
                                               }}
                                               className={`w-full text-left p-1.5 rounded border text-[10px] font-bold truncate transition-all hover:brightness-95 shadow-sm ${event.color || 'bg-blue-50 border-blue-200 text-blue-700'}`}
                                               title={`${new Date(event.startTime.seconds * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} - ${event.attendeeName}`}
@@ -896,29 +920,36 @@ export const CalendarPage = ({
           )}
       </div>
 
-      {viewingMeeting && (
+      {viewingMeeting && (() => {
+          const isGoogle = viewingMeeting.source === 'google';
+          const meetingDate = isGoogle
+              ? new Date(viewingMeeting.start)
+              : (viewingMeeting.startTime?.seconds ? new Date(viewingMeeting.startTime.seconds * 1000) : null);
+          const meetingTitle = isGoogle ? 'Google Calendar' : viewingMeeting.eventTypeTitle;
+          const meetingName = isGoogle ? viewingMeeting.title : viewingMeeting.attendeeName;
+          return (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-0 sm:p-4 z-[600] backdrop-blur-sm animate-in fade-in duration-200" onClick={(e) => e.target === e.currentTarget && setViewingMeeting(null)}>
               <div className="bg-white rounded-none sm:rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-full sm:max-h-[90vh]">
                   <div className="flex justify-between items-start p-6 border-b border-slate-100 shrink-0">
                       <div>
-                          <h3 className="text-lg font-bold text-slate-800">{isCancelling ? 'Cancel Event' : viewingMeeting.eventTypeTitle}</h3>
-                          {!isCancelling && <div className="text-slate-500 text-sm font-medium">with {viewingMeeting.attendeeName}</div>}
+                          <h3 className="text-lg font-bold text-slate-800">{isCancelling ? 'Cancel Event' : meetingTitle}</h3>
+                          {!isCancelling && <div className="text-slate-500 text-sm font-medium">with {meetingName}</div>}
                       </div>
                       <div className="flex items-center gap-2">
-                          {!isCancelling && (
+                          {!isCancelling && !isGoogle && (
                               <button onClick={handleEditMeeting} className="p-2 text-slate-400 hover:text-slate-600 rounded-full transition-colors"><Edit3 className="w-5 h-5" /></button>
                           )}
                           <button onClick={() => { setViewingMeeting(null); setIsCancelling(false); }} className="p-2 text-slate-400 hover:text-slate-600 rounded-full"><X className="w-5 h-5" /></button>
                       </div>
                   </div>
-                  
+
                   <div className="p-6 overflow-y-auto flex-1 space-y-6">
                       {isCancelling ? (
                           <div className="space-y-4">
                               <p className="text-sm text-slate-600">Timeslot will be freed up.</p>
-                              <textarea 
-                                className="w-full border rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none" 
-                                rows={4} 
+                              <textarea
+                                className="w-full border rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                rows={4}
                                 placeholder="Reason for cancellation..."
                                 value={cancelReason}
                                 onChange={e => setCancelReason(e.target.value)}
@@ -929,15 +960,16 @@ export const CalendarPage = ({
                               <div className="flex items-start gap-4">
                                   <div className="p-2 bg-slate-100 rounded-lg text-slate-500"><Calendar className="w-5 h-5" /></div>
                                   <div>
-                                      <div className="text-sm font-bold text-slate-800">{viewingMeeting.startTime?.seconds ? new Date(viewingMeeting.startTime.seconds * 1000).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }) : 'Date TBD'}</div>
-                                      <div className="text-sm text-slate-500">{viewingMeeting.startTime?.seconds ? new Date(viewingMeeting.startTime.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</div>
+                                      <div className="text-sm font-bold text-slate-800">{meetingDate ? meetingDate.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }) : 'Date TBD'}</div>
+                                      <div className="text-sm text-slate-500">{meetingDate ? meetingDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</div>
                                   </div>
                               </div>
                               <div className="flex items-start gap-4">
                                   <div className="p-2 bg-slate-100 rounded-lg text-slate-500"><Video className="w-5 h-5" /></div>
                                   <div className="text-sm font-bold text-slate-800">{viewingMeeting.location || 'Zoom web conference'}</div>
                               </div>
-                              
+
+                              {!isGoogle && (
                               <div className="border-t pt-4">
                                   <h4 className="text-xs font-bold text-slate-400 uppercase mb-3 tracking-widest">Participants</h4>
                                   <div className="flex items-center gap-3">
@@ -950,6 +982,16 @@ export const CalendarPage = ({
                                       </div>
                                   </div>
                               </div>
+                              )}
+
+                              {isGoogle && (
+                                  <div className="border-t pt-4">
+                                      <div className="flex items-center gap-2 text-xs text-green-600 font-bold bg-green-50 px-3 py-2 rounded-lg border border-green-100">
+                                          <Calendar className="w-3.5 h-3.5" />
+                                          Synced from Google Calendar — edit in Google Calendar
+                                      </div>
+                                  </div>
+                              )}
 
                               {viewingMeeting.notes && (
                                   <div className="border-t pt-4">
@@ -967,6 +1009,10 @@ export const CalendarPage = ({
                               <button onClick={() => setIsCancelling(false)} className="py-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100 rounded-lg transition-colors">Back</button>
                               <button onClick={handleConfirmCancel} className="bg-red-600 text-white px-6 py-2 rounded-xl text-sm font-bold shadow-lg hover:bg-red-700 transition-all">Confirm Cancellation</button>
                           </>
+                      ) : isGoogle ? (
+                          <div className="w-full text-center">
+                              <a href="https://calendar.google.com" target="_blank" rel="noopener noreferrer" className="text-sm font-bold text-blue-600 hover:underline">Open Google Calendar</a>
+                          </div>
                       ) : (
                           <>
                               <button onClick={handleEditMeeting} className="flex items-center gap-1.5 text-sm font-bold text-blue-600 hover:underline"><RotateCcw className="w-4 h-4" /> Reschedule</button>
@@ -976,7 +1022,8 @@ export const CalendarPage = ({
                   </div>
               </div>
           </div>
-      )}
+          );
+      })()}
 
       {/* Event Type Modal */}
       {isModalOpen && (
