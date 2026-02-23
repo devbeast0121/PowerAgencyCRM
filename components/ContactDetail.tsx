@@ -433,9 +433,12 @@ export const ContactDetail = ({ contact, allContacts, notes = [], emails = [], o
         
         {/* Unified Info Section */}
         <div className="p-6 space-y-6 border-t border-slate-100 bg-white">
+           {contact.title && <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Job Title</label><div className="text-sm text-slate-700 mt-1.5 font-semibold">{contact.title}</div></div>}
            <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Primary Email</label><div className="text-sm text-slate-700 mt-1.5 font-semibold truncate">{displayEmails[0]?.value || '-'}</div></div>
            <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Phone Number</label><div className="text-sm text-slate-700 mt-1.5 font-semibold">{displayPhones[0]?.value || '-'}</div></div>
            <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Address</label><div className="text-sm text-slate-700 mt-1.5 font-semibold leading-relaxed">{contact.address || '-'}</div></div>
+           {contact.linkedin && <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">LinkedIn</label><a href={contact.linkedin.startsWith('http') ? contact.linkedin : `https://${contact.linkedin}`} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 mt-1.5 font-semibold truncate hover:underline flex items-center gap-1.5"><Linkedin className="w-3.5 h-3.5" /> View Profile</a></div>}
+           {contact.website && <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Website</label><a href={contact.website.startsWith('http') ? contact.website : `https://${contact.website}`} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 mt-1.5 font-semibold truncate hover:underline flex items-center gap-1.5"><Globe className="w-3.5 h-3.5" /> {contact.website.replace(/^https?:\/\//, '')}</a></div>}
            <div><label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block">Pipeline Stage</label><StatusBadge status={contact.status} /></div>
         </div>
       </div>

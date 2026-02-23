@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Plus, Edit3, Trash2, Mail, User, Shield, Check, X, Lock, Eye, AlertTriangle, Crown, List as ListIcon, Calendar as CalendarIcon, Type as TypeIcon, Hash, Building2, UserCircle2, FileUp } from 'lucide-react';
 import { ImportModal } from './ImportModal';
 
-export const SettingsPage = ({ teamMembers = [], setTeamMembers, customFields = [], onAddCustomField, onDeleteCustomField, onImportContacts }: any) => {
+export const SettingsPage = ({ teamMembers = [], onAddTeamMember, onUpdateTeamMember, onDeleteTeamMember, currentUser, customFields = [], onAddCustomField, onDeleteCustomField, onImportContacts }: any) => {
   const [activeTab, setActiveTab] = useState('team_members');
   // Simulating Current User Role for demonstration purposes
   const [currentUserRole, setCurrentUserRole] = useState<'Super Admin' | 'Admin' | 'Assistant' | 'Member'>('Super Admin');
@@ -24,36 +24,40 @@ export const SettingsPage = ({ teamMembers = [], setTeamMembers, customFields = 
   const canImportData = currentUserRole === 'Super Admin' || currentUserRole === 'Admin';
 
   // Helper to determine if the current user can delete a specific target user
-  const canDeleteUser = (targetRole: string, targetId: string) => {
+  const canDeleteUser = (targetRole: string, member: any) => {
       // Cannot delete yourself
-      if (targetId === '1') return false; 
+      if (member.uid === currentUser?.uid) return false;
 
       if (currentUserRole === 'Super Admin') {
-          return true; // Super Admin can delete anyone else
+          return true;
       }
-      
+
       if (currentUserRole === 'Admin') {
-          // Admin can only delete Assistants and Members
           return ['Assistant', 'Member'].includes(targetRole);
       }
 
       return false;
   };
 
+  const [addMemberError, setAddMemberError] = useState<string | null>(null);
   const handleAddMember = (e: React.FormEvent) => {
       e.preventDefault();
-      if(newMember.name && newMember.email) {
-          // Simulate sending invite
-          const member = { ...newMember, id: Date.now().toString(), avatar: null };
-          setTeamMembers([...teamMembers, member]);
-          
-          // Reset and close
-          setNewMember({ name: '', email: '', role: 'Member' });
-          setShowAddMember(false);
-          
-          // Simulation feedback
-          alert(`Invitation sent to ${member.email} as ${member.role}`);
-      }
+      setAddMemberError(null);
+      const trimmedName = newMember.name.trim();
+      const trimmedEmail = newMember.email.trim().toLowerCase();
+      if (!trimmedName || !trimmedEmail) { setAddMemberError('Name and email are required.'); return; }
+      // Basic email format check
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) { setAddMemberError('Please enter a valid email address.'); return; }
+      // Duplicate check (local, before calling parent)
+      if (teamMembers.some((m: any) => m.email?.toLowerCase() === trimmedEmail)) { setAddMemberError('A team member with this email already exists.'); return; }
+      onAddTeamMember({
+          name: trimmedName,
+          email: trimmedEmail,
+          role: newMember.role,
+          avatar: null,
+      });
+      setNewMember({ name: '', email: '', role: 'Member' });
+      setShowAddMember(false);
   };
 
   const handleAddField = (e: React.FormEvent) => {
@@ -76,7 +80,7 @@ export const SettingsPage = ({ teamMembers = [], setTeamMembers, customFields = 
   };
 
   const confirmDelete = (id: string) => {
-      setTeamMembers((prev: any[]) => prev.filter(m => m.id !== id));
+      onDeleteTeamMember(id);
       setDeleteConfirmId(null);
   };
 
@@ -391,15 +395,16 @@ export const SettingsPage = ({ teamMembers = [], setTeamMembers, customFields = 
                                  </div>
                              </div>
 
-                             <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 mt-2">
-                                 <button 
-                                    type="button" 
-                                    onClick={() => setShowAddMember(false)}
+                             {addMemberError && <p className="text-xs text-red-500 font-medium">{addMemberError}</p>}
+                            <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 mt-2">
+                                 <button
+                                    type="button"
+                                    onClick={() => { setShowAddMember(false); setAddMemberError(null); }}
                                     className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-200 rounded-lg transition-colors"
                                  >
                                      Cancel
                                  </button>
-                                 <button 
+                                 <button
                                     type="submit"
                                     className="px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors flex items-center gap-2 shadow-sm"
                                  >
@@ -425,12 +430,14 @@ export const SettingsPage = ({ teamMembers = [], setTeamMembers, customFields = 
                               <tr key={member.id} className="group hover:bg-slate-50 transition-colors">
                                  <td className="px-4 py-3">
                                      <div className="flex items-center gap-2">
-                                         <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${member.role === 'Super Admin' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-600'}`}>
-                                             {member.role === 'Super Admin' ? <Crown className="w-4 h-4" /> : member.name.charAt(0)}
+                                         <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold overflow-hidden ${member.role === 'Super Admin' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-600'}`}>
+                                             {member.avatar ? (
+                                                 <img src={member.avatar} alt={member.name} className="w-full h-full object-cover" />
+                                             ) : member.role === 'Super Admin' ? <Crown className="w-4 h-4" /> : member.name.charAt(0)}
                                          </div>
                                          <div>
                                              <div className="font-medium text-slate-800 flex items-center gap-1">
-                                                 {member.name} {member.id === '1' && <span className="text-slate-400 font-normal text-xs">(You)</span>}
+                                                 {member.name} {member.uid === currentUser?.uid && <span className="text-slate-400 font-normal text-xs">(You)</span>}
                                              </div>
                                          </div>
                                      </div>
@@ -469,8 +476,8 @@ export const SettingsPage = ({ teamMembers = [], setTeamMembers, customFields = 
                                              </button>
                                          </div>
                                      ) : (
-                                         canDeleteUser(member.role, member.id) ? (
-                                             <button 
+                                         canDeleteUser(member.role, member) ? (
+                                             <button
                                                 type="button"
                                                 onClick={(e) => { e.stopPropagation(); handleDeleteClick(member.id); }}
                                                 className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
@@ -480,7 +487,7 @@ export const SettingsPage = ({ teamMembers = [], setTeamMembers, customFields = 
                                              </button>
                                          ) : (
                                              <span className="text-slate-300 text-xs italic cursor-not-allowed">
-                                                 {member.id === '1' ? '' : 'Locked'}
+                                                 {member.uid === currentUser?.uid ? '' : 'Locked'}
                                              </span>
                                          )
                                      )}

@@ -9,13 +9,13 @@ import {
 import { isValidDate, formatDate, getInitials } from '../utils';
 import { RichTextEditor } from './RichTextEditor';
 
-export const CalendarPage = ({ 
-    eventTypes, scheduledEvents, onCreateEventType, onUpdateEventType, onDeleteEventType, 
+export const CalendarPage = ({
+    eventTypes, scheduledEvents, onCreateEventType, onUpdateEventType, onDeleteEventType,
     isGoogleConnected, onConnectGoogle, onDisconnectGoogle, googleEvents, todos, onBookMeeting,
     onNavigateToSettings, onCompose, contacts, onNavigate, onUpdateScheduledEvent, onDeleteScheduledEvent,
-    teamMembers = [], 
+    teamMembers = [],
     bookingPages = [], onCreateBookingPage, onUpdateBookingPage, onDeleteBookingPage,
-    initialBooking, onClearInitialBooking
+    initialBooking, onClearInitialBooking, user
 }: any) => {
   // Main Navigation
   const [activeSection, setActiveSection] = useState<'meetings' | 'scheduling' | 'booking_pages' | 'availability'>('meetings');
@@ -295,8 +295,14 @@ export const CalendarPage = ({
     setEditingBookingPage(null);
   };
 
+  const [bookingError, setBookingError] = useState<string | null>(null);
   const handleBookMeeting = () => {
-      if (!selectedEventType || !bookingDate || !bookingTime || !inviteeName || !inviteeEmail) return;
+      setBookingError(null);
+      if (!selectedEventType || !bookingDate || !bookingTime) return;
+      const trimmedName = inviteeName.trim();
+      const trimmedEmail = inviteeEmail.trim();
+      if (!trimmedName) { setBookingError('Name is required.'); return; }
+      if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) { setBookingError('Valid email is required.'); return; }
       const [time, period] = bookingTime.split(' ');
       const [hours, minutes] = time.split(':').map(Number);
       let adjustedHours = hours;
@@ -306,8 +312,8 @@ export const CalendarPage = ({
       startTime.setHours(adjustedHours, minutes);
       const eventData = {
           eventTypeTitle: selectedEventType.title,
-          attendeeName: inviteeName,
-          attendeeEmail: inviteeEmail,
+          attendeeName: trimmedName,
+          attendeeEmail: trimmedEmail,
           guests,
           startTime: { seconds: Math.floor(startTime.getTime() / 1000) },
           duration: selectedEventType.duration,
@@ -371,7 +377,9 @@ export const CalendarPage = ({
   };
 
   const copyLink = (slug: string, id: string) => {
-      navigator.clipboard.writeText(`https://simplecrm.com/meet/${slug}`);
+      const baseUrl = window.location.origin;
+      const bookingUrl = `${baseUrl}/#/book/${user?.uid || 'unknown'}/${slug}`;
+      navigator.clipboard.writeText(bookingUrl);
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 2000);
   };
@@ -1038,9 +1046,13 @@ export const CalendarPage = ({
                       <button onClick={() => setIsModalOpen(false)}><X className="w-5 h-5 text-slate-400" /></button>
                   </div>
                   <form onSubmit={handleSubmitEventType} className="p-6 space-y-4 overflow-y-auto max-h-[80vh]">
-                      <div><label className="block text-xs font-bold text-slate-400 uppercase mb-1">Name</label><input required className="w-full border rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} /></div>
+                      <div><label className="block text-xs font-bold text-slate-400 uppercase mb-1">Name</label><input required className="w-full border rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none" value={formData.title} onChange={e => {
+                          const title = e.target.value;
+                          const autoSlug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+                          setFormData({...formData, title, slug: formData.slug ? formData.slug : autoSlug});
+                      }} /></div>
                       <div className="grid grid-cols-2 gap-4">
-                          <div><label className="block text-xs font-bold text-slate-400 uppercase mb-1">Duration (min)</label><input type="number" required className="w-full border rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none" value={formData.duration} onChange={e => setFormData({...formData, duration: e.target.value})} /></div>
+                          <div><label className="block text-xs font-bold text-slate-400 uppercase mb-1">Duration (min)</label><input type="number" required min="1" className="w-full border rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none" value={formData.duration} onChange={e => setFormData({...formData, duration: e.target.value})} /></div>
                           <div>
                               <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Location</label>
                               <select className="w-full border rounded-lg px-4 py-2 bg-white focus:ring-2 focus:ring-blue-500 outline-none" value={formData.location} onChange={e => setFormData({...formData, location: e.target.value})}>
@@ -1081,7 +1093,12 @@ export const CalendarPage = ({
                       <button onClick={() => setIsBookingPageModalOpen(false)}><X className="w-5 h-5 text-slate-400" /></button>
                   </div>
                   <form onSubmit={handleSubmitBookingPage} className="p-6 space-y-4">
-                      <div><label className="block text-xs font-bold text-slate-400 uppercase mb-1">Page Title</label><input required className="w-full border rounded-lg px-4 py-2" value={bookingPageFormData.title} onChange={e => setBookingPageFormData({...bookingPageFormData, title: e.target.value})} /></div>
+                      <div><label className="block text-xs font-bold text-slate-400 uppercase mb-1">Page Title</label><input required className="w-full border rounded-lg px-4 py-2" value={bookingPageFormData.title} onChange={e => {
+                          const title = e.target.value;
+                          const autoSlug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+                          setBookingPageFormData({...bookingPageFormData, title, slug: bookingPageFormData.slug ? bookingPageFormData.slug : autoSlug});
+                      }} /></div>
+                      <div><label className="block text-xs font-bold text-slate-400 uppercase mb-1">URL Slug</label><input required className="w-full border rounded-lg px-4 py-2 text-sm" value={bookingPageFormData.slug} onChange={e => setBookingPageFormData({...bookingPageFormData, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '')})} placeholder="my-booking-page" /></div>
                       <div>
                           <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Included Events</label>
                           <div className="mt-2 space-y-2 max-h-40 overflow-y-auto border p-3 rounded-lg">
@@ -1244,7 +1261,8 @@ export const CalendarPage = ({
                        </div>
                   </div>
                   <div className="p-6 border-t bg-slate-50 shrink-0">
-                       <button onClick={handleBookMeeting} disabled={!bookingDate || !bookingTime || !inviteeName || !inviteeEmail} className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-xl font-bold shadow-lg shadow-blue-600/20 transition-all active:scale-[0.98]">
+                       {bookingError && <p className="text-sm text-red-500 mb-2">{bookingError}</p>}
+                       <button onClick={handleBookMeeting} disabled={!bookingDate || !bookingTime || !inviteeName.trim() || !inviteeEmail.trim()} className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-xl font-bold shadow-lg shadow-blue-600/20 transition-all active:scale-[0.98]">
                            {editingEventId ? 'Update Booking' : 'Confirm Booking'}
                        </button>
                   </div>

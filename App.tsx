@@ -179,10 +179,9 @@ export function App() {
   const nextStartTimeRef = useRef<number>(0);
   const micStreamRef = useRef<MediaStream | null>(null);
 
-  // --- Team Members State ---
-  const [teamMembers, setTeamMembers] = useState([
-    { id: '1', name: 'You', email: 'you@company.com', role: 'Super Admin', avatar: null },
-  ]);
+  // --- Team Members State (Firestore-backed) ---
+  const [teamMembers, setTeamMembers] = useState<any[]>([]);
+  const hasSeededTeamMember = useRef(false);
 
   // Compose Modal State
   const [isComposeOpen, setIsComposeOpen] = useState(false);
@@ -526,10 +525,11 @@ export function App() {
     const unsubPipelines = createListener('pipelines', setPipelines);
     const unsubBookingPages = createListener('booking_pages', setBookingPages);
     const unsubCustomFields = createListener('custom_fields', setCustomFields);
-    return () => { 
-        unsubContacts(); unsubNotes(); unsubGroups(); unsubTodos(); 
-        unsubEventTypes(); unsubScheduledEvents(); unsubPipelines(); 
-        unsubBookingPages(); unsubCustomFields();
+    const unsubTeamMembers = createListener('team_members', setTeamMembers, (a: any, b: any) => a.name.localeCompare(b.name));
+    return () => {
+        unsubContacts(); unsubNotes(); unsubGroups(); unsubTodos();
+        unsubEventTypes(); unsubScheduledEvents(); unsubPipelines();
+        unsubBookingPages(); unsubCustomFields(); unsubTeamMembers();
     };
   }, [user]);
 
@@ -541,8 +541,22 @@ export function App() {
 
   const handleAddContact = async (contactData: any) => {
     if (!user) return;
+    // Trim name
+    const trimmedName = (contactData.name || '').trim();
+    if (!trimmedName) return null;
+    // Check for duplicate (same name + same primary email)
+    const primaryEmail = contactData.emails?.find((e: any) => e.value.trim())?.value?.trim().toLowerCase() || '';
+    if (primaryEmail) {
+      const duplicate = contacts.find((c: any) => {
+        const cEmail = c.emails?.find((e: any) => e.value.trim())?.value?.trim().toLowerCase() || c.email?.toLowerCase() || '';
+        return c.name?.toLowerCase() === trimmedName.toLowerCase() && cEmail === primaryEmail;
+      });
+      if (duplicate) {
+        if (!confirm(`A contact named "${duplicate.name}" with email "${primaryEmail}" already exists. Add anyway?`)) return null;
+      }
+    }
     try {
-      const docRef = await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'contacts'), { ...contactData, createdAt: serverTimestamp() });
+      const docRef = await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'contacts'), { ...contactData, name: trimmedName, createdAt: serverTimestamp() });
       setIsContactModalOpen(false);
       if (modalCallback) { modalCallback(docRef.id, contactData); setModalCallback(null); }
       setContactModalInitialData(null);
@@ -637,6 +651,51 @@ export function App() {
       try { await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'custom_fields', id)); } catch (e) { }
   };
 
+  // --- Team Members CRUD ---
+  const handleAddTeamMember = async (memberData: any) => {
+      if (!user) return;
+      // Trim whitespace
+      const trimmed = { ...memberData, name: (memberData.name || '').trim(), email: (memberData.email || '').trim() };
+      if (!trimmed.name || !trimmed.email) return;
+      // Check for duplicate email
+      const emailLower = trimmed.email.toLowerCase();
+      const isDuplicate = teamMembers.some((m: any) => m.email?.toLowerCase() === emailLower);
+      if (isDuplicate) { alert('A team member with this email already exists.'); return; }
+      try { await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'team_members'), { ...trimmed, createdAt: serverTimestamp() }); } catch (e) { console.error('Add team member error', e); }
+  };
+  const handleUpdateTeamMember = async (id: string, data: any) => {
+      if (!user) return;
+      try { await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'team_members', id), data); } catch (e) { console.error('Update team member error', e); }
+  };
+  const handleDeleteTeamMember = async (id: string) => {
+      if (!user) return;
+      try { await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'team_members', id)); } catch (e) { console.error('Delete team member error', e); }
+  };
+
+  // Auto-seed current user as team member if none exist
+  useEffect(() => {
+      if (!user || hasSeededTeamMember.current) return;
+      // Wait briefly for Firestore listener to fire
+      const timer = setTimeout(() => {
+          const currentUserExists = teamMembers.some(
+              (m: any) => m.uid === user.uid || (user.email && m.email?.toLowerCase() === user.email.toLowerCase())
+          );
+          if (!currentUserExists && teamMembers.length === 0) {
+              hasSeededTeamMember.current = true;
+              // Direct addDoc to bypass duplicate check (this is the initial seed)
+              addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'team_members'), {
+                  uid: user.uid,
+                  name: user.displayName || user.email?.split('@')[0] || 'You',
+                  email: user.email || '',
+                  role: 'Super Admin',
+                  avatar: user.photoURL || null,
+                  createdAt: serverTimestamp(),
+              }).catch(e => { console.error('Auto-seed error', e); hasSeededTeamMember.current = false; });
+          }
+      }, 2000);
+      return () => clearTimeout(timer);
+  }, [user, teamMembers.length]);
+
   const handleCreateGroup = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!user || !newGroupName.trim()) return;
@@ -682,7 +741,11 @@ export function App() {
 
   const handleCreateEventType = async (data: any) => {
     if (!user) return;
-    await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'event_types'), { ...data, createdAt: serverTimestamp() });
+    const duration = parseInt(data.duration);
+    if (!duration || duration < 1) { alert('Duration must be at least 1 minute.'); return; }
+    const slug = (data.slug || '').trim();
+    if (slug && eventTypes.some((et: any) => et.slug === slug)) { alert('An event type with this slug already exists.'); return; }
+    await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'event_types'), { ...data, duration: String(duration), createdAt: serverTimestamp() });
   };
 
   const handleUpdateEventType = async (id: string, data: any) => {
@@ -697,7 +760,11 @@ export function App() {
 
   const handleCreateBookingPage = async (data: any) => {
     if (!user) return;
-    await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'booking_pages'), { ...data, createdAt: serverTimestamp() });
+    const slug = (data.slug || '').trim();
+    if (!slug) { alert('URL slug is required.'); return; }
+    if (bookingPages.some((bp: any) => bp.slug === slug)) { alert('A booking page with this slug already exists. Please choose a different one.'); return; }
+    if (!data.includedEventTypeIds || data.includedEventTypeIds.length === 0) { alert('Please include at least one event type.'); return; }
+    await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'booking_pages'), { ...data, slug, createdAt: serverTimestamp() });
   };
 
   const handleUpdateBookingPage = async (id: string, data: any) => {
@@ -734,6 +801,10 @@ export function App() {
 
   const handleSeedData = async () => {
     if (!user) return;
+    // Guard against seeding when data already exists
+    if (contacts.length > 0 || tagGroups.length > 0) {
+      if (!confirm('Data already exists. Loading sample data will add duplicates. Continue?')) return;
+    }
     const sampleGroups = [
       { name: "App development", color: "bg-blue-100 text-blue-700" },
       { name: "Branding", color: "bg-purple-100 text-purple-700" },
@@ -1198,7 +1269,7 @@ ${cleanText.substring(0, 3000)}
                   <Dashboard contacts={contacts} notes={notes} todos={todos} emails={emails} scheduledEvents={scheduledEvents} setView={setView} onSeedData={handleSeedData} onUpdateNote={handleUpdateNote} onDeleteNote={handleDeleteNote} user={user} onNavigate={(id: string) => { setSelectedContactId(id); setView('contacts'); }} onToggleTodo={handleToggleTodo} onDeleteTodo={handleDeleteTodo} onSpeak={handleSpeak} isSpeaking={isSpeaking} />
               )}
               {view === 'calendar' && !selectedContactId && (
-                  <CalendarPage eventTypes={eventTypes} scheduledEvents={scheduledEvents} bookingPages={bookingPages} onCreateBookingPage={handleCreateBookingPage} onUpdateBookingPage={handleUpdateBookingPage} onDeleteBookingPage={handleDeleteBookingPage} todos={todos} onCreateEventType={handleCreateEventType} onUpdateEventType={handleUpdateEventType} onDeleteEventType={handleDeleteEventType} isGoogleConnected={isGoogleCalendarConnected} onConnectGoogle={handleConnectGoogleCalendar} onDisconnectGoogle={handleDisconnectGoogleCalendar} googleEvents={googleEvents} onBookMeeting={handleAddScheduledEvent} onNavigateToSettings={() => setView('settings')} onCompose={handleCompose} contacts={contacts} onNavigate={(id: string) => { setSelectedContactId(id); setView('contacts'); }} onUpdateScheduledEvent={handleUpdateScheduledEvent} onDeleteScheduledEvent={handleDeleteScheduledEvent} teamMembers={teamMembers} initialBooking={initialCalendarBooking} onClearInitialBooking={() => setInitialCalendarBooking(null)} />
+                  <CalendarPage eventTypes={eventTypes} scheduledEvents={scheduledEvents} bookingPages={bookingPages} onCreateBookingPage={handleCreateBookingPage} onUpdateBookingPage={handleUpdateBookingPage} onDeleteBookingPage={handleDeleteBookingPage} todos={todos} onCreateEventType={handleCreateEventType} onUpdateEventType={handleUpdateEventType} onDeleteEventType={handleDeleteEventType} isGoogleConnected={isGoogleCalendarConnected} onConnectGoogle={handleConnectGoogleCalendar} onDisconnectGoogle={handleDisconnectGoogleCalendar} googleEvents={googleEvents} onBookMeeting={handleAddScheduledEvent} onNavigateToSettings={() => setView('settings')} onCompose={handleCompose} contacts={contacts} onNavigate={(id: string) => { setSelectedContactId(id); setView('contacts'); }} onUpdateScheduledEvent={handleUpdateScheduledEvent} onDeleteScheduledEvent={handleDeleteScheduledEvent} teamMembers={teamMembers} initialBooking={initialCalendarBooking} onClearInitialBooking={() => setInitialCalendarBooking(null)} user={user} />
               )}
               {view === 'email' && !selectedContactId && (
                  <EmailPage user={user} emails={emails} contacts={contacts} tagGroups={tagGroups} todos={todos} scheduledEvents={scheduledEvents} initialSelectedEmailId={initialSelectedEmailId} onClearInitialEmailId={() => setInitialSelectedEmailId(null)} onCompose={handleCompose} onUpdateEmail={handleUpdateEmail} onDeleteEmail={handleDeleteEmail} isGoogleConnected={isGoogleEmailConnected} onConnectGoogle={handleConnectGoogle} onNavigateContact={(id: string) => { setSelectedContactId(id); setView('contacts'); }} onBookMeeting={(contact: any) => { setInitialCalendarBooking({ name: contact.name, email: contact.email }); setView('calendar'); setSelectedContactId(null); }} onSummarize={handleSummarizeText} onOpenAddContact={(data: any) => { setContactModalInitialData(data); setIsContactModalOpen(true); }} />
@@ -1206,7 +1277,7 @@ ${cleanText.substring(0, 3000)}
               {view === 'groups' && !selectedContactId && (
                   <GroupsPage contacts={contacts} tagGroups={tagGroups} onGroupClick={(filter: string) => { setFilterType(filter); setView('contacts'); }} onAddNewGroup={() => setIsGroupModalOpen(true)} onEditGroup={handleEditGroup} onDeleteGroup={handleDeleteGroup} />
               )}
-              {view === 'settings' && !selectedContactId && <SettingsPage teamMembers={teamMembers} setTeamMembers={setTeamMembers} customFields={customFields} onAddCustomField={handleAddCustomField} onDeleteCustomField={handleDeleteCustomField} />}
+              {view === 'settings' && !selectedContactId && <SettingsPage teamMembers={teamMembers} onAddTeamMember={handleAddTeamMember} onUpdateTeamMember={handleUpdateTeamMember} onDeleteTeamMember={handleDeleteTeamMember} currentUser={user} customFields={customFields} onAddCustomField={handleAddCustomField} onDeleteCustomField={handleDeleteCustomField} />}
               {view === 'todo' && !selectedContactId && (
                   <TodoPage user={user} contacts={contacts} onNavigate={(id: string) => { setSelectedContactId(id); setView('contacts'); }} todos={todos} onToggle={handleToggleTodo} onDelete={handleDeleteTodo} onAdd={handleAddTodo} />
               )}
@@ -1255,7 +1326,10 @@ ${cleanText.substring(0, 3000)}
                                       <td className="px-3 sm:px-6 py-3 sm:py-4 text-center">{contact.type === 'Company' ? <Building2 className="w-5 h-5 text-orange-500 mx-auto" /> : <UserIcon className="w-5 h-5 text-blue-500 mx-auto" />}</td>
                                       <td className="px-3 sm:px-6 py-3 sm:py-4 font-bold text-slate-900 text-sm sm:text-base">{contact.name}</td>
                                       <td className="px-3 sm:px-6 py-3 sm:py-4 hidden sm:table-cell">{contact.groups?.join(', ') || '-'}</td>
-                                      <td className="px-3 sm:px-6 py-3 sm:py-4 text-right"><ChevronRight className="w-5 h-5 text-slate-400" /></td>
+                                      <td className="px-3 sm:px-6 py-3 sm:py-4 text-right flex items-center justify-end gap-1">
+                                        <button onClick={(e) => { e.stopPropagation(); if (confirm(`Delete "${contact.name}"?`)) handleDeleteContact(contact.id); }} className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all" title="Delete"><Trash2 className="w-4 h-4" /></button>
+                                        <ChevronRight className="w-5 h-5 text-slate-400" />
+                                      </td>
                                     </tr>
                                 ))}
                               </tbody>

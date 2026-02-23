@@ -1,6 +1,7 @@
 
 import React, { useState } from 'react';
-import { User as UserIcon, Building2, Linkedin, DownloadCloud, Camera, Mail, Phone, Globe, Calendar, MapPin, AlignLeft, Tag, PlusCircle, Filter } from 'lucide-react';
+import { User as UserIcon, Building2, Linkedin, DownloadCloud, Camera, Mail, Phone, Globe, Calendar, MapPin, AlignLeft, Tag, PlusCircle, Filter, Loader2 } from 'lucide-react';
+import { GoogleGenAI } from "@google/genai";
 import { DynamicInputList } from './Shared';
 import { resizeImage } from '../utils';
 
@@ -43,16 +44,119 @@ export const ContactForm = ({ onSubmit, onCancel, existingCompanies, allContacts
     }
   };
 
-  const handleFetchInfo = () => {
+  const [isFetchingInfo, setIsFetchingInfo] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  const parseLinkedInSlug = (url: string): string => {
+    if (!url.includes('/in/')) return '';
+    const parts = url.split('/in/');
+    if (!parts[1]) return '';
+    let slug = parts[1].split('/')[0].split('?')[0]; // Remove trailing slash and query params
+    // Remove trailing LinkedIn hex ID suffix (e.g., "-b58a2b1a5", "-3a7b8c9d0")
+    // These are typically 8-12 hex chars at the end after a hyphen
+    slug = slug.replace(/-[a-f0-9]{6,}$/i, '');
+    // Remove any trailing numbers-only segment (e.g., "-123456789")
+    slug = slug.replace(/-\d{4,}$/, '');
+    // Convert hyphens to spaces and capitalize
+    return slug.replace(/-/g, ' ').split(' ')
+        .filter(s => s.length > 0)
+        .map(s => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase())
+        .join(' ');
+  };
+
+  const handleFetchInfo = async () => {
     if (!formData.linkedin) return;
-    if (!formData.name && formData.linkedin.includes('/in/')) {
-        const parts = formData.linkedin.split('/in/');
-        if (parts[1]) {
-            const slug = parts[1].split('/')[0];
-            const name = slug.split('-').map((s: string) => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
-            setFormData(prev => ({...prev, name}));
+    setIsFetchingInfo(true);
+    setFetchError(null);
+
+    const parsedName = parseLinkedInSlug(formData.linkedin);
+    const apiKey = process.env.API_KEY;
+
+    if (!apiKey) {
+        if (parsedName) setFormData(prev => ({...prev, name: prev.name || parsedName}));
+        else setFetchError('No API key configured.');
+        setIsFetchingInfo(false);
+        return;
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+    let text = '';
+    let searchWorked = false;
+
+    // Try with Google Search grounding first for real data
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: `Search for this LinkedIn profile and find the person's real professional information: ${formData.linkedin}
+
+The LinkedIn URL slug suggests the name might be "${parsedName}".
+
+Return ONLY valid JSON (no markdown, no backticks, no explanation):
+{"name": "Full name", "title": "Current job title", "company": "Current company name", "background": "One sentence professional summary"}
+
+Use empty string "" for any field you cannot verify.`,
+            config: { tools: [{ googleSearch: {} }] },
+        });
+        text = (response.text || '').replace(/```json|```/g, '').trim();
+        searchWorked = true;
+    } catch (e1: any) {
+        console.warn('Search grounding failed:', e1?.message || e1);
+    }
+
+    // Fallback: no grounding, just use AI knowledge + slug hint
+    if (!searchWorked) {
+        try {
+            const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: `I have a LinkedIn profile URL: ${formData.linkedin}
+The URL slug is "${parsedName}". Based on what you know, provide professional info about this person.
+
+Return ONLY valid JSON (no markdown, no backticks, no explanation):
+{"name": "Full name (best guess from URL slug)", "title": "", "company": "", "background": ""}
+
+For name, just clean up the URL slug "${parsedName}" into a proper name. Leave other fields empty if unsure.`,
+            });
+            text = (response.text || '').replace(/```json|```/g, '').trim();
+        } catch (e2: any) {
+            console.error('Gemini fallback also failed:', e2?.message || e2);
         }
     }
+
+    // Parse the response
+    if (text) {
+        try {
+            // Extract JSON from response - handle cases where AI adds extra text
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) throw new Error('No JSON found');
+            const data = JSON.parse(jsonMatch[0]);
+            const updated: any = {};
+            if (data.name && !formData.name) updated.name = data.name;
+            else if (parsedName && !formData.name) updated.name = parsedName;
+            if (data.title && !formData.title) updated.title = data.title;
+            if (data.company && !formData.company) updated.company = data.company;
+            if (data.background && !formData.background) updated.background = data.background;
+            if (Object.keys(updated).length > 0) {
+                setFormData(prev => ({ ...prev, ...updated }));
+                if (!searchWorked) setFetchError('Name set from URL. Job/company may need manual entry.');
+            } else {
+                setFetchError('All fields already filled.');
+            }
+        } catch (parseErr) {
+            console.error('JSON parse error:', parseErr, text);
+            if (parsedName && !formData.name) setFormData(prev => ({...prev, name: parsedName}));
+            setFetchError('Name set from URL. Could not parse additional info.');
+        }
+    } else {
+        // Both calls failed entirely - just use parsed name
+        if (parsedName) {
+            setFormData(prev => ({...prev, name: prev.name || parsedName}));
+            setFetchError('API unavailable. Name parsed from URL.');
+        } else {
+            setFetchError('Could not fetch profile info.');
+        }
+    }
+
+    setIsFetchingInfo(false);
   };
 
   const toggleGroup = (group: string) => {
@@ -112,12 +216,21 @@ export const ContactForm = ({ onSubmit, onCancel, existingCompanies, allContacts
       }
   };
 
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name) return;
+    setSubmitError(null);
+    const trimmedName = formData.name.trim();
+    if (!trimmedName) return;
+    const cleanedEmails = formData.emails.filter((e: any) => e.value.trim() !== '');
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const invalidEmail = cleanedEmails.find((e: any) => !emailRegex.test(e.value.trim()));
+    if (invalidEmail) { setSubmitError(`Invalid email: ${invalidEmail.value}`); return; }
     const cleanedData = {
       ...formData,
-      emails: formData.emails.filter((e: any) => e.value.trim() !== ''),
+      name: trimmedName,
+      emails: cleanedEmails,
       phones: formData.phones.filter((p: any) => p.value.trim() !== '')
     };
     // Ensure pipelineId is set if missing (default to first pipeline)
@@ -139,7 +252,7 @@ export const ContactForm = ({ onSubmit, onCancel, existingCompanies, allContacts
         <label className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg cursor-pointer transition-all text-sm font-bold ${formData.type === 'Person' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}><input type="radio" name="type" value="Person" checked={formData.type === 'Person'} onChange={() => setFormData({...formData, type: 'Person'})} className="hidden" /><UserIcon className="w-4 h-4" /> Person</label>
         <label className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg cursor-pointer transition-all text-sm font-bold ${formData.type === 'Company' ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}><input type="radio" name="type" value="Company" checked={formData.type === 'Company'} onChange={() => setFormData({...formData, type: 'Company'})} className="hidden" /><Building2 className="w-4 h-4" /> Company</label>
       </div>
-      <div className="mb-6"><label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1.5">LinkedIn Profile</label><div className="flex flex-col sm:flex-row gap-2"><div className="relative flex-1"><Linkedin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-blue-700" /><input className="w-full pl-9 pr-3 py-2.5 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 text-sm" value={formData.linkedin} onChange={e => setFormData({...formData, linkedin: e.target.value})} placeholder="URL..." /></div><button type="button" onClick={handleFetchInfo} className="px-4 py-2.5 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 shrink-0 transition-colors"><DownloadCloud className="w-4 h-4" /> Fetch Info</button></div></div>
+      <div className="mb-6"><label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1.5">LinkedIn Profile</label><div className="flex flex-col sm:flex-row gap-2"><div className="relative flex-1"><Linkedin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-blue-700" /><input className="w-full pl-9 pr-3 py-2.5 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 text-sm" value={formData.linkedin} onChange={e => setFormData({...formData, linkedin: e.target.value})} placeholder="URL..." /></div><button type="button" onClick={handleFetchInfo} disabled={isFetchingInfo || !formData.linkedin} className="px-4 py-2.5 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 shrink-0 transition-colors disabled:opacity-50">{isFetchingInfo ? <Loader2 className="w-4 h-4 animate-spin" /> : <DownloadCloud className="w-4 h-4" />} {isFetchingInfo ? 'Fetching...' : 'Fetch Info'}</button></div>{fetchError && <p className="text-xs text-amber-600 mt-1">{fetchError}</p>}</div>
       <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 sm:gap-6 mb-8 text-center sm:text-left">
         <div className="shrink-0"><label className="w-24 h-24 rounded-full bg-slate-50 border-2 border-dashed border-slate-200 flex flex-col items-center justify-center cursor-pointer hover:border-emerald-500 hover:bg-emerald-50 transition-all overflow-hidden relative group">{formData.photo ? (<img src={formData.photo} className="w-full h-full object-cover" />) : (<><Camera className="w-6 h-6 text-slate-300 mb-1 group-hover:text-emerald-500" /><span className="text-[10px] text-slate-400 uppercase font-bold group-hover:text-emerald-500">Photo</span></>)}<input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} /></label></div>
         <div className="flex-1 w-full"><label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{formData.type === 'Company' ? 'Company Name *' : 'Full Name *'}</label><input required className="w-full text-xl sm:text-2xl font-bold border-b-2 border-slate-100 focus:border-emerald-500 outline-none py-2 bg-transparent placeholder-slate-200 transition-colors" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder={formData.type === 'Company' ? "Ex: Acme Corp" : "Ex: Jane Doe"} /></div>
@@ -230,6 +343,7 @@ export const ContactForm = ({ onSubmit, onCancel, existingCompanies, allContacts
              </div>
            </div>
         </div>
+        {submitError && <p className="text-sm text-red-500 font-medium">{submitError}</p>}
         <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-6 border-t border-slate-100"><button type="button" onClick={onCancel} className="px-6 py-2.5 text-sm font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition-colors">Discard</button><button type="submit" className="px-8 py-2.5 bg-slate-900 text-white rounded-xl hover:bg-slate-800 font-bold text-sm shadow-lg shadow-slate-900/10 active:scale-[0.98] transition-all">Save {formData.type}</button></div>
       </div>
     </form>
