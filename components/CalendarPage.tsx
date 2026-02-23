@@ -26,7 +26,7 @@ export const CalendarPage = ({
 
   // Meetings Filter & View Mode
   const [meetingsFilter, setMeetingsFilter] = useState<'today' | 'past' | 'range'>('today');
-  const [meetingsViewMode, setMeetingsViewMode] = useState<'list' | 'calendar'>('list');
+  const [meetingsViewMode, setMeetingsViewMode] = useState<'list' | 'month' | 'week' | 'day'>('list');
   const [meetingsCalendarDate, setMeetingsCalendarDate] = useState(new Date());
   const [dateRangeStart, setDateRangeStart] = useState('');
   const [dateRangeEnd, setDateRangeEnd] = useState('');
@@ -612,20 +612,10 @@ export const CalendarPage = ({
 
                   {/* View Mode Toggle */}
                   <div className="flex p-1 bg-slate-100 border border-slate-200 rounded-lg shrink-0">
-                      <button 
-                        onClick={() => setMeetingsViewMode('list')} 
-                        className={`p-1.5 rounded-md transition-all ${meetingsViewMode === 'list' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`} 
-                        title="List View"
-                      >
-                          <List className="w-4 h-4" />
-                      </button>
-                      <button 
-                        onClick={() => setMeetingsViewMode('calendar')} 
-                        className={`p-1.5 rounded-md transition-all ${meetingsViewMode === 'calendar' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`} 
-                        title="Calendar View"
-                      >
-                          <CalendarDays className="w-4 h-4" />
-                      </button>
+                      <button onClick={() => setMeetingsViewMode('list')} className={`px-2.5 py-1.5 rounded-md transition-all text-xs font-bold ${meetingsViewMode === 'list' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`} title="List View"><List className="w-4 h-4" /></button>
+                      <button onClick={() => setMeetingsViewMode('day')} className={`px-2.5 py-1.5 rounded-md transition-all text-xs font-bold ${meetingsViewMode === 'day' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`} title="Day View">Day</button>
+                      <button onClick={() => setMeetingsViewMode('week')} className={`px-2.5 py-1.5 rounded-md transition-all text-xs font-bold ${meetingsViewMode === 'week' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`} title="Week View">Wk</button>
+                      <button onClick={() => setMeetingsViewMode('month')} className={`px-2.5 py-1.5 rounded-md transition-all text-xs font-bold ${meetingsViewMode === 'month' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`} title="Month View"><CalendarDays className="w-4 h-4" /></button>
                   </div>
               </div>
 
@@ -651,12 +641,12 @@ export const CalendarPage = ({
                                           <div className="font-bold text-slate-800">{event.attendeeName}</div>
                                           <div className="text-xs text-slate-500">{event.eventTypeTitle}</div>
                                       </div>
-                                      <button 
-                                        onClick={() => { 
-                                            setViewingMeeting(event); 
-                                            setNoteContent(event.notes || ''); 
-                                            setIsAddingNote(false); 
-                                            setIsCancelling(false); 
+                                      <button
+                                        onClick={() => {
+                                            setViewingMeeting(event);
+                                            setNoteContent(event.notes || '');
+                                            setIsAddingNote(false);
+                                            setIsCancelling(false);
                                         }}
                                         className="text-blue-600 text-xs font-bold hover:underline opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity"
                                       >
@@ -667,9 +657,177 @@ export const CalendarPage = ({
                           })
                       )}
                   </div>
+              ) : meetingsViewMode === 'week' ? (
+                  renderWeekView()
+              ) : meetingsViewMode === 'day' ? (
+                  renderDayView()
               ) : (
                   renderCalendarView()
               )}
+          </div>
+      );
+  };
+
+  // Shared helper: get all events for a given date string
+  const getEventsForDay = (dStr: string) => {
+      const crm = (scheduledEvents || []).filter((e: any) =>
+          e.startTime && new Date(e.startTime.seconds * 1000).toDateString() === dStr
+      );
+      const goog = (googleEvents || []).filter((e: any) =>
+          e.start && new Date(e.start).toDateString() === dStr
+      );
+      return { crm, goog };
+  };
+
+  // Shared helper: render a single timed event pill
+  const renderEventPill = (event: any, isGoogle = false) => {
+      const time = isGoogle
+          ? new Date(event.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+          : new Date(event.startTime.seconds * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      const label = isGoogle ? event.title : event.attendeeName;
+      const colorClass = isGoogle ? 'bg-green-50 border-green-200 text-green-700' : `${event.color?.replace('bg-', 'bg-').replace('500', '50') || 'bg-blue-50'} border-blue-200 text-blue-700`;
+      return (
+          <button
+              key={event.id}
+              onClick={() => { setViewingMeeting(event); setNoteContent(event.notes || ''); setIsAddingNote(false); setIsCancelling(false); }}
+              className={`w-full text-left px-1.5 py-1 rounded border text-[10px] font-bold truncate shadow-sm transition-all hover:brightness-95 ${colorClass}`}
+              title={`${time} — ${label}`}
+          >
+              <span className="opacity-60 mr-1">{time}</span>{label}
+          </button>
+      );
+  };
+
+  const renderWeekView = () => {
+      // Week starts on Sunday
+      const base = new Date(meetingsCalendarDate);
+      const dow = base.getDay(); // 0=Sun
+      const weekStart = new Date(base);
+      weekStart.setDate(base.getDate() - dow);
+
+      const days: Date[] = [];
+      for (let i = 0; i < 7; i++) {
+          const d = new Date(weekStart);
+          d.setDate(weekStart.getDate() + i);
+          days.push(d);
+      }
+
+      const prevWeek = () => {
+          const d = new Date(meetingsCalendarDate);
+          d.setDate(d.getDate() - 7);
+          setMeetingsCalendarDate(d);
+      };
+      const nextWeek = () => {
+          const d = new Date(meetingsCalendarDate);
+          d.setDate(d.getDate() + 7);
+          setMeetingsCalendarDate(d);
+      };
+      const goToday = () => setMeetingsCalendarDate(new Date());
+
+      const weekLabel = `${days[0].toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${days[6].toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+
+      return (
+          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden animate-in fade-in duration-300">
+              {/* Header */}
+              <div className="p-3 sm:p-4 flex items-center justify-between gap-2 border-b bg-slate-50/50">
+                  <h3 className="text-sm sm:text-base font-bold text-slate-800">{weekLabel}</h3>
+                  <div className="flex items-center bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+                      <button onClick={prevWeek} className="p-1.5 sm:p-2 hover:bg-slate-50 text-slate-600 border-r transition-colors"><ChevronLeft className="w-4 h-4" /></button>
+                      <button onClick={goToday} className="px-2 sm:px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50 border-r transition-colors">Today</button>
+                      <button onClick={nextWeek} className="p-1.5 sm:p-2 hover:bg-slate-50 text-slate-600 transition-colors"><ChevronRight className="w-4 h-4" /></button>
+                  </div>
+              </div>
+              {/* Day columns */}
+              <div className="overflow-x-auto">
+                  <div className="min-w-[560px] grid grid-cols-7 divide-x border-b">
+                      {days.map((date, i) => {
+                          const dStr = date.toDateString();
+                          const isToday = new Date().toDateString() === dStr;
+                          const { crm, goog } = getEventsForDay(dStr);
+                          const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
+                          return (
+                              <div key={i} className={`flex flex-col min-h-[220px] ${isToday ? 'bg-blue-50/30' : 'bg-white'}`}>
+                                  {/* Day header */}
+                                  <div className={`py-2 text-center border-b ${isToday ? 'bg-blue-50' : 'bg-slate-50'}`}>
+                                      <div className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">{dayName}</div>
+                                      <div className={`text-lg font-bold mx-auto w-8 h-8 flex items-center justify-center rounded-full ${isToday ? 'bg-blue-600 text-white' : 'text-slate-700'}`}>
+                                          {date.getDate()}
+                                      </div>
+                                  </div>
+                                  {/* Events */}
+                                  <div className="flex-1 p-1.5 space-y-1 overflow-y-auto">
+                                      {goog.map((e: any) => renderEventPill(e, true))}
+                                      {crm.map((e: any) => renderEventPill(e, false))}
+                                      {crm.length === 0 && goog.length === 0 && (
+                                          <div className="text-[10px] text-slate-300 text-center mt-4 italic">No events</div>
+                                      )}
+                                  </div>
+                              </div>
+                          );
+                      })}
+                  </div>
+              </div>
+          </div>
+      );
+  };
+
+  const renderDayView = () => {
+      const date = meetingsCalendarDate;
+      const dStr = date.toDateString();
+      const isToday = new Date().toDateString() === dStr;
+      const { crm, goog } = getEventsForDay(dStr);
+
+      // Build hourly slots 0–23
+      const hours = Array.from({ length: 24 }, (_, i) => i);
+
+      const getHourEvents = (hour: number, list: any[], isGoogle: boolean) =>
+          list.filter((e: any) => {
+              const d = isGoogle ? new Date(e.start) : new Date(e.startTime.seconds * 1000);
+              return d.getHours() === hour;
+          });
+
+      const prevDay = () => { const d = new Date(date); d.setDate(d.getDate() - 1); setMeetingsCalendarDate(d); };
+      const nextDay = () => { const d = new Date(date); d.setDate(d.getDate() + 1); setMeetingsCalendarDate(d); };
+      const goToday = () => setMeetingsCalendarDate(new Date());
+
+      const dayLabel = date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+      const totalEvents = crm.length + goog.length;
+
+      return (
+          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden animate-in fade-in duration-300">
+              {/* Header */}
+              <div className="p-3 sm:p-4 flex items-center justify-between gap-2 border-b bg-slate-50/50">
+                  <div className="flex items-center gap-3">
+                      <h3 className={`text-sm sm:text-base font-bold ${isToday ? 'text-blue-600' : 'text-slate-800'}`}>{dayLabel}</h3>
+                      {totalEvents > 0 && <span className="text-xs font-bold bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">{totalEvents} event{totalEvents > 1 ? 's' : ''}</span>}
+                  </div>
+                  <div className="flex items-center bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+                      <button onClick={prevDay} className="p-1.5 sm:p-2 hover:bg-slate-50 text-slate-600 border-r transition-colors"><ChevronLeft className="w-4 h-4" /></button>
+                      <button onClick={goToday} className="px-2 sm:px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50 border-r transition-colors">Today</button>
+                      <button onClick={nextDay} className="p-1.5 sm:p-2 hover:bg-slate-50 text-slate-600 transition-colors"><ChevronRight className="w-4 h-4" /></button>
+                  </div>
+              </div>
+              {/* Hourly grid */}
+              <div className="overflow-y-auto max-h-[520px]">
+                  {hours.map(hour => {
+                      const googHour = getHourEvents(hour, goog, true);
+                      const crmHour = getHourEvents(hour, crm, false);
+                      const hasEvents = googHour.length > 0 || crmHour.length > 0;
+                      const label = hour === 0 ? '12 AM' : hour < 12 ? `${hour} AM` : hour === 12 ? '12 PM' : `${hour - 12} PM`;
+                      const isCurrentHour = isToday && new Date().getHours() === hour;
+                      return (
+                          <div key={hour} className={`flex border-b last:border-0 min-h-[48px] ${isCurrentHour ? 'bg-blue-50/40' : hasEvents ? 'bg-white' : 'bg-slate-50/30'}`}>
+                              <div className={`w-16 shrink-0 text-right pr-3 pt-2 text-[10px] font-bold select-none ${isCurrentHour ? 'text-blue-500' : 'text-slate-400'}`}>
+                                  {label}
+                              </div>
+                              <div className="flex-1 px-2 py-1.5 space-y-1 border-l">
+                                  {googHour.map((e: any) => renderEventPill(e, true))}
+                                  {crmHour.map((e: any) => renderEventPill(e, false))}
+                              </div>
+                          </div>
+                      );
+                  })}
+              </div>
           </div>
       );
   };

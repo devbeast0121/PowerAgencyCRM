@@ -230,7 +230,7 @@ export function App() {
         liveSessionRef.current = null;
     }
     if (micStreamRef.current) {
-        micStreamRef.getTracks().forEach(track => track.stop());
+        micStreamRef.current.getTracks().forEach(track => track.stop());
         micStreamRef.current = null;
     }
     liveSources.current.forEach(source => { try { source.stop(); } catch(e) {} });
@@ -568,6 +568,22 @@ export function App() {
     if (!user) return;
     try { await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'contacts', id), data); } catch (e) { }
   };
+
+  // Listen for group add/remove events dispatched from GroupsPage MemberRow
+  useEffect(() => {
+    const handler = (e: any) => {
+      const { contactId, groupName, add } = e.detail;
+      const contact = contacts.find((c: any) => c.id === contactId);
+      if (!contact) return;
+      const current: string[] = contact.groups || [];
+      const updated = add
+        ? [...new Set([...current, groupName])]
+        : current.filter((g: string) => g !== groupName);
+      handleUpdateContact(contactId, { groups: updated });
+    };
+    window.addEventListener('crm:group-toggle', handler);
+    return () => window.removeEventListener('crm:group-toggle', handler);
+  }, [contacts, user]);
 
   const handleDeleteContact = async (id: string) => {
     if (!user) return;
@@ -1275,7 +1291,7 @@ ${cleanText.substring(0, 3000)}
                  <EmailPage user={user} emails={emails} contacts={contacts} tagGroups={tagGroups} todos={todos} scheduledEvents={scheduledEvents} initialSelectedEmailId={initialSelectedEmailId} onClearInitialEmailId={() => setInitialSelectedEmailId(null)} onCompose={handleCompose} onUpdateEmail={handleUpdateEmail} onDeleteEmail={handleDeleteEmail} isGoogleConnected={isGoogleEmailConnected} onConnectGoogle={handleConnectGoogle} onNavigateContact={(id: string) => { setSelectedContactId(id); setView('contacts'); }} onBookMeeting={(contact: any) => { setInitialCalendarBooking({ name: contact.name, email: contact.email }); setView('calendar'); setSelectedContactId(null); }} onSummarize={handleSummarizeText} onOpenAddContact={(data: any) => { setContactModalInitialData(data); setIsContactModalOpen(true); }} />
               )}
               {view === 'groups' && !selectedContactId && (
-                  <GroupsPage contacts={contacts} tagGroups={tagGroups} onGroupClick={(filter: string) => { setFilterType(filter); setView('contacts'); }} onAddNewGroup={() => setIsGroupModalOpen(true)} onEditGroup={handleEditGroup} onDeleteGroup={handleDeleteGroup} />
+                  <GroupsPage contacts={contacts} tagGroups={tagGroups} onGroupClick={(filter: string) => { setFilterType(filter); setView('contacts'); }} onAddNewGroup={() => setIsGroupModalOpen(true)} onEditGroup={handleEditGroup} onDeleteGroup={handleDeleteGroup} onCompose={handleCompose} />
               )}
               {view === 'settings' && !selectedContactId && <SettingsPage teamMembers={teamMembers} onAddTeamMember={handleAddTeamMember} onUpdateTeamMember={handleUpdateTeamMember} onDeleteTeamMember={handleDeleteTeamMember} currentUser={user} customFields={customFields} onAddCustomField={handleAddCustomField} onDeleteCustomField={handleDeleteCustomField} />}
               {view === 'todo' && !selectedContactId && (
@@ -1560,6 +1576,47 @@ ${cleanText.substring(0, 3000)}
           </div>
         )}
 
+        {isGroupModalOpen && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[350]">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
+              <div className="flex justify-between items-center p-5 border-b border-slate-100">
+                <h3 className="text-lg font-bold text-slate-800">{editingGroup ? 'Edit Group' : 'New Group'}</h3>
+                <button onClick={handleCloseGroupModal} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+              </div>
+              <form onSubmit={handleCreateGroup} className="p-5 space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5">Group Name</label>
+                  <input
+                    autoFocus
+                    required
+                    className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+                    placeholder="e.g. VIP Clients"
+                    value={newGroupName}
+                    onChange={e => setNewGroupName(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Color</label>
+                  <div className="flex flex-wrap gap-2">
+                    {GROUP_COLORS.map(c => (
+                      <button
+                        key={c.name}
+                        type="button"
+                        onClick={() => setNewGroupColor(c)}
+                        className={`w-7 h-7 rounded-full ${c.bg} border-2 transition-all ${newGroupColor.name === c.name ? 'border-slate-700 scale-110' : 'border-transparent'}`}
+                        title={c.name}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div className="flex justify-end gap-3 pt-2">
+                  <button type="button" onClick={handleCloseGroupModal} className="px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition-colors">Cancel</button>
+                  <button type="submit" className="px-6 py-2 bg-slate-900 text-white rounded-xl hover:bg-slate-800 font-bold text-sm transition-colors">{editingGroup ? 'Save Changes' : 'Create Group'}</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
         {isContactModalOpen && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[300]">
             <div className="bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden max-h-[90vh] overflow-y-auto">

@@ -223,15 +223,44 @@ For name, just clean up the URL slug "${parsedName}" into a proper name. Leave o
     const trimmedName = formData.name.trim();
     if (!trimmedName) return;
     const cleanedEmails = formData.emails.filter((e: any) => e.value.trim() !== '');
+    const cleanedPhones = formData.phones.filter((p: any) => p.value.trim() !== '');
+
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const invalidEmail = cleanedEmails.find((e: any) => !emailRegex.test(e.value.trim()));
     if (invalidEmail) { setSubmitError(`Invalid email: ${invalidEmail.value}`); return; }
+
+    // Validate phone format (digits, spaces, dashes, parens, plus, dots — min 7 digits)
+    const phoneRegex = /^[+]?[(]?[0-9]{1,4}[)]?[-\s.]?[(]?[0-9]{1,4}[)]?[-\s.]?[0-9]{1,4}[-\s.]?[0-9]{1,9}$/;
+    const digitCount = (v: string) => (v.match(/\d/g) || []).length;
+    const invalidPhone = cleanedPhones.find((p: any) => {
+      const v = p.value.trim();
+      return !phoneRegex.test(v) || digitCount(v) < 7;
+    });
+    if (invalidPhone) { setSubmitError(`Invalid phone number: ${invalidPhone.value}`); return; }
+
+    // Validate website format
+    if (formData.website.trim()) {
+      const websiteRegex = /^(https?:\/\/)?([\w-]+\.)+[\w-]{2,}(\/.*)?$/i;
+      if (!websiteRegex.test(formData.website.trim())) {
+        setSubmitError('Invalid website URL. Example: example.com or https://example.com'); return;
+      }
+    }
+
+    // Validate birthday — must be in the past (up to yesterday)
+    if (formData.birthday) {
+      const bday = new Date(formData.birthday);
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      yesterday.setHours(23, 59, 59, 999);
+      if (bday > yesterday) { setSubmitError('Birthday must be yesterday or earlier.'); return; }
+    }
+
     const cleanedData = {
       ...formData,
       name: trimmedName,
       emails: cleanedEmails,
-      phones: formData.phones.filter((p: any) => p.value.trim() !== '')
+      phones: cleanedPhones
     };
     // Ensure pipelineId is set if missing (default to first pipeline)
     if (!cleanedData.pipelineId && pipelines.length > 0) {
