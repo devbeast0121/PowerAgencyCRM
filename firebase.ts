@@ -1,26 +1,28 @@
 import { initializeApp } from 'firebase/app';
-import { 
-  getAuth, 
-  signInWithCustomToken as _signInWithCustomToken, 
-  signInAnonymously as _signInAnonymously, 
+import {
+  getAuth,
+  signInWithCustomToken as _signInWithCustomToken,
+  signInAnonymously as _signInAnonymously,
   onAuthStateChanged as _onAuthStateChanged,
   GoogleAuthProvider,
   signInWithPopup,
+  linkWithPopup,
   createUserWithEmailAndPassword as _createUserWithEmailAndPassword,
   signInWithEmailAndPassword as _signInWithEmailAndPassword,
   signOut as _signOut,
   updateProfile as _updateProfile
 } from 'firebase/auth';
-import { 
-  getFirestore, 
-  collection as _collection, 
-  addDoc as _addDoc, 
-  updateDoc as _updateDoc, 
-  deleteDoc as _deleteDoc, 
-  doc as _doc, 
-  query as _query, 
-  onSnapshot as _onSnapshot, 
-  serverTimestamp as _serverTimestamp 
+import {
+  getFirestore,
+  collection as _collection,
+  addDoc as _addDoc,
+  setDoc as _setDoc,
+  updateDoc as _updateDoc,
+  deleteDoc as _deleteDoc,
+  doc as _doc,
+  query as _query,
+  onSnapshot as _onSnapshot,
+  serverTimestamp as _serverTimestamp
 } from 'firebase/firestore';
 
 // Fallback for development if global variables are missing
@@ -47,6 +49,7 @@ let signInWithEmailAndPassword: any;
 let signOut: any;
 let collection: any;
 let addDoc: any;
+let setDoc: any;
 let updateDoc: any;
 let deleteDoc: any;
 let doc: any;
@@ -79,10 +82,30 @@ if (!isMock) {
   };
 
   // General Google Sign In (with Gmail scopes for real integration)
+  // If user is already signed in (email/password), use linkWithPopup to get Gmail token
+  // without switching the Firebase auth user — keeps Firestore data under the same UID.
   signInWithGoogle = async () => {
       const provider = new GoogleAuthProvider();
       provider.addScope('https://www.googleapis.com/auth/gmail.readonly');
       provider.addScope('https://www.googleapis.com/auth/gmail.send');
+      const currentUser = auth.currentUser;
+      if (currentUser) {
+          try {
+              // Try to link — gets the Gmail OAuth token without changing the auth user
+              const result = await linkWithPopup(currentUser, provider);
+              const credential = GoogleAuthProvider.credentialFromResult(result);
+              return { user: result.user, credential };
+          } catch (linkErr: any) {
+              // Already linked or different account — fall back to getting token via signInWithPopup
+              // but restore the original user session immediately after
+              if (linkErr.code === 'auth/credential-already-in-use' || linkErr.code === 'auth/email-already-in-use' || linkErr.code === 'auth/provider-already-linked') {
+                  const credential = GoogleAuthProvider.credentialFromError(linkErr);
+                  return { user: currentUser, credential };
+              }
+              throw linkErr;
+          }
+      }
+      // No user signed in — normal Google sign-in flow
       const result = await signInWithPopup(auth, provider);
       const credential = GoogleAuthProvider.credentialFromResult(result);
       return { user: result.user, credential };
@@ -91,6 +114,7 @@ if (!isMock) {
   
   collection = _collection;
   addDoc = _addDoc;
+  setDoc = _setDoc;
   updateDoc = _updateDoc;
   deleteDoc = _deleteDoc;
   doc = _doc;
@@ -219,6 +243,18 @@ if (!isMock) {
       return { id };
   };
 
+  setDoc = async (docRef: any, data: any, options?: any) => {
+      const store = loadData();
+      const id = docRef.path.split('/').pop();
+      const collPath = docRef.path.split('/').slice(0, -1).join('/');
+      const existing = store[docRef.path] || {};
+      const finalData = options?.merge ? { ...existing, ...data, id } : { ...data, id };
+      store[docRef.path] = finalData;
+      saveData(store);
+      notifyListeners(collPath);
+      return { id };
+  };
+
   updateDoc = async (docRef: any, data: any) => {
       const store = loadData();
       if (store[docRef.path]) {
@@ -274,5 +310,5 @@ export {
   signInWithCustomToken, signInAnonymously, onAuthStateChanged, 
   signInWithGoogleCalendar, signInWithGoogle,
   createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
-  collection, addDoc, updateDoc, deleteDoc, doc, query, onSnapshot, serverTimestamp
+  collection, addDoc, setDoc, updateDoc, deleteDoc, doc, query, onSnapshot, serverTimestamp
 };

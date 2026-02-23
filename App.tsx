@@ -6,14 +6,14 @@ import {
   Circle, CheckCircle2, XCircle, Shapes, X, Minimize2, Maximize2, Send, Paperclip,
   Sparkles, Loader2, Copy, PhoneOff, Mic, SlidersHorizontal, ChevronDown, Filter, RotateCcw,
   Smile, Link as LinkIcon, Lock, Pen, MoreVertical, Trash2, HardDrive, Image as ImageIcon,
-  FileText, Clock, Calendar as CalendarIcon, Check, Menu
+  FileText, Clock, Calendar as CalendarIcon, Check, Menu, Save
 } from 'lucide-react';
 import { GoogleGenAI, Modality, LiveServerMessage } from "@google/genai";
 import { User } from 'firebase/auth';
 import { 
   auth, db, appId, 
   signInWithCustomToken, signInAnonymously, onAuthStateChanged, signInWithGoogleCalendar, signInWithGoogle,
-  collection, addDoc, updateDoc, deleteDoc, doc, query, onSnapshot, serverTimestamp
+  collection, addDoc, setDoc, updateDoc, deleteDoc, doc, query, onSnapshot, serverTimestamp
 } from './firebase';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './components/Dashboard';
@@ -199,6 +199,7 @@ export function App() {
   const [calendarViewDate, setCalendarViewDate] = useState(new Date());
   const composeAttachmentInputRef = useRef<HTMLInputElement>(null);
 
+  const [isSeeding, setIsSeeding] = useState(false);
   const [isGeminiOpen, setIsGeminiOpen] = useState(false);
   const [geminiPrompt, setGeminiPrompt] = useState('');
   const [geminiLoading, setGeminiLoading] = useState(false);
@@ -269,7 +270,7 @@ export function App() {
     setIsContactModalOpen(true);
   };
 
-  // Gmail access token stored in state for API calls
+  // Gmail access token stored in state for API calls (valid only for current session)
   const [gmailAccessToken, setGmailAccessToken] = useState<string | null>(null);
 
   // Fetch real Gmail messages using the Gmail API (batched to avoid 429)
@@ -354,7 +355,24 @@ export function App() {
             };
         }).sort((a: any, b: any) => b.date.getTime() - a.date.getTime());
 
-        setEmails(parsed);
+        // Save Gmail emails to Firestore so they persist across page refreshes.
+        // Use the Gmail message ID as the Firestore doc ID to avoid duplicates on re-fetch.
+        if (user) {
+            await Promise.allSettled(parsed.map((email: any) => {
+                const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'email', email.id);
+                return setDoc(docRef, {
+                    ...email,
+                    date: email.date instanceof Date ? email.date.toISOString() : email.date,
+                    _fromGmail: true,
+                }, { merge: true });
+            }));
+        }
+        // Update local state immediately (Firestore listener will also fire but this is faster)
+        const tagged = parsed.map((e: any) => ({ ...e, _fromGmail: true }));
+        setEmails(prev => {
+            const nonGmail = prev.filter((e: any) => !e._fromGmail);
+            return [...tagged, ...nonGmail].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        });
     } catch (error) { console.error('Failed to fetch Gmail messages:', error); }
   };
 
@@ -398,7 +416,6 @@ export function App() {
           if (accessToken) {
               setGmailAccessToken(accessToken);
               setIsGoogleEmailConnected(true);
-              // Fetch real emails if not in mock mode
               await fetchGmailMessages(accessToken);
           }
       } catch (e) { console.error('Gmail connect error:', e); }
@@ -526,10 +543,23 @@ export function App() {
     const unsubBookingPages = createListener('booking_pages', setBookingPages);
     const unsubCustomFields = createListener('custom_fields', setCustomFields);
     const unsubTeamMembers = createListener('team_members', setTeamMembers, (a: any, b: any) => a.name.localeCompare(b.name));
+    // All CRM emails (Gmail cached + drafts) are stored in Firestore — load them all here
+    const unsubEmails = createListener('email', (data: any[]) => {
+        const allEmails = data.map((e: any) => ({
+            ...e,
+            // date may be a Firestore Timestamp, ISO string, or already a Date
+            date: e.date?.toDate ? e.date.toDate() : (e.date ? new Date(e.date) : new Date()),
+        }));
+        setEmails(prev => {
+            // Keep any local optimistic items (e.g. a draft just saved) until Firestore snapshot arrives with them
+            const optimistic = prev.filter((e: any) => e._optimistic && !allEmails.find((f: any) => f.id === e.id));
+            return [...allEmails, ...optimistic].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        });
+    });
     return () => {
         unsubContacts(); unsubNotes(); unsubGroups(); unsubTodos();
         unsubEventTypes(); unsubScheduledEvents(); unsubPipelines();
-        unsubBookingPages(); unsubCustomFields(); unsubTeamMembers();
+        unsubBookingPages(); unsubCustomFields(); unsubTeamMembers(); unsubEmails();
     };
   }, [user]);
 
@@ -688,29 +718,33 @@ export function App() {
       try { await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'team_members', id)); } catch (e) { console.error('Delete team member error', e); }
   };
 
-  // Auto-seed current user as team member if none exist
+  // Auto-seed current user as team member AND clean up any legacy duplicates created by addDoc (random IDs)
   useEffect(() => {
       if (!user || hasSeededTeamMember.current) return;
-      // Wait briefly for Firestore listener to fire
-      const timer = setTimeout(() => {
-          const currentUserExists = teamMembers.some(
-              (m: any) => m.uid === user.uid || (user.email && m.email?.toLowerCase() === user.email.toLowerCase())
-          );
-          if (!currentUserExists && teamMembers.length === 0) {
-              hasSeededTeamMember.current = true;
-              // Direct addDoc to bypass duplicate check (this is the initial seed)
-              addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'team_members'), {
-                  uid: user.uid,
-                  name: user.displayName || user.email?.split('@')[0] || 'You',
-                  email: user.email || '',
-                  role: 'Super Admin',
-                  avatar: user.photoURL || null,
-                  createdAt: serverTimestamp(),
-              }).catch(e => { console.error('Auto-seed error', e); hasSeededTeamMember.current = false; });
-          }
-      }, 2000);
-      return () => clearTimeout(timer);
-  }, [user, teamMembers.length]);
+      hasSeededTeamMember.current = true;
+
+      // Upsert canonical record using uid as doc ID — idempotent across all refreshes
+      const canonicalRef = doc(db, 'artifacts', appId, 'users', user.uid, 'team_members', user.uid);
+      setDoc(canonicalRef, {
+          uid: user.uid,
+          name: user.displayName || user.email?.split('@')[0] || 'You',
+          email: user.email || '',
+          role: 'Super Admin',
+          avatar: user.photoURL || null,
+          createdAt: serverTimestamp(),
+      }, { merge: true }).catch(e => { console.error('Auto-seed error', e); hasSeededTeamMember.current = false; });
+
+      // One-time cleanup: delete any legacy duplicates that have random addDoc IDs but same uid/email
+      const q = query(collection(db, 'artifacts', appId, 'users', user.uid, 'team_members'));
+      const unsub = onSnapshot(q, (snap: any) => {
+          unsub(); // fire once only
+          snap.docs.forEach((d: any) => {
+              const data = d.data();
+              const isLegacyDuplicate = d.id !== user.uid && (data.uid === user.uid || (user.email && data.email?.toLowerCase() === user.email.toLowerCase()));
+              if (isLegacyDuplicate) deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'team_members', d.id)).catch(() => {});
+          });
+      }, () => {});
+  }, [user]);
 
   const handleCreateGroup = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -815,104 +849,193 @@ export function App() {
     } catch (e) { console.error('Failed to add scheduled event:', e); }
   };
 
-  const handleSeedData = async () => {
+  // Clear all user data from every Firestore collection
+  const handleClearAllData = async () => {
     if (!user) return;
-    // Guard against seeding when data already exists
+    if (!confirm('This will permanently delete ALL your CRM data. Are you sure?')) return;
+    const colls = ['contacts', 'notes', 'todos', 'tag_groups', 'event_types', 'scheduled_events', 'email', 'custom_fields', 'pipelines', 'booking_pages'];
+    try {
+      for (const coll of colls) {
+        const q = query(collection(db, 'artifacts', appId, 'users', user.uid, coll));
+        await new Promise<void>((resolve) => {
+          const unsub = onSnapshot(q, async (snap: any) => {
+            unsub();
+            await Promise.all(snap.docs.map((d: any) => deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, coll, d.id))));
+            resolve();
+          });
+        });
+      }
+    } catch (e) { console.error('Clear error', e); }
+  };
+
+  const handleSeedData = async () => {
+    if (!user || isSeeding) return;
     if (contacts.length > 0 || tagGroups.length > 0) {
-      if (!confirm('Data already exists. Loading sample data will add duplicates. Continue?')) return;
+      if (!confirm('Data already exists. This will ADD to existing data. Clear first if you want a clean slate.')) return;
     }
+    setIsSeeding(true);
+
+    // Helper: days offset from today
+    const daysAgo = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return d; };
+    const daysFromNow = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return d; };
+
     const sampleGroups = [
-      { name: "App development", color: "bg-blue-100 text-blue-700" },
       { name: "Branding", color: "bg-purple-100 text-purple-700" },
-      { name: "Government contacts", color: "bg-slate-100 text-slate-700" },
-      { name: "Marketing Agency", color: "bg-orange-100 text-orange-700" },
-      { name: "Marketing Strategy", color: "bg-amber-100 text-amber-700" },
-      { name: "Potential Partner", color: "bg-emerald-100 text-emerald-700" },
-      { name: "Public Relations", color: "bg-pink-100 text-pink-700" },
-      { name: "Solopraneur", color: "bg-indigo-100 text-indigo-700" },
+      { name: "E-commerce", color: "bg-blue-100 text-blue-700" },
+      { name: "Hospitality", color: "bg-amber-100 text-amber-700" },
+      { name: "Real Estate", color: "bg-emerald-100 text-emerald-700" },
+      { name: "SaaS", color: "bg-indigo-100 text-indigo-700" },
+      { name: "Key Account", color: "bg-red-100 text-red-700" },
+      { name: "Referral", color: "bg-pink-100 text-pink-700" },
     ];
 
     try {
       for (const g of sampleGroups) { await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'tag_groups'), { ...g, createdAt: serverTimestamp() }); }
 
       await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'pipelines'), {
-          name: "Sales Pipeline",
+          name: "Agency Sales Pipeline",
           stages: [
               { name: 'Lead', category: 'Lead' },
               { name: 'Contacted', category: 'Lead' },
-              { name: 'Proposal', category: 'Lead' },
+              { name: 'Proposal Sent', category: 'Lead' },
               { name: 'Negotiation', category: 'Lead' },
-              { name: 'Closed', category: 'Customer' },
-              { name: 'Lost', category: 'Lost' }
+              { name: 'Closed Won', category: 'Customer' },
+              { name: 'Closed Lost', category: 'Lost' }
           ],
           createdAt: serverTimestamp()
       });
 
-      const demoData = [
-        { type: 'Company', name: "Cyberdyne Systems", status: "Lead", lifecycleStage: "Lead", email: "info@cyberdyne.net", phone: "555-0199", address: "123 Tech Blvd", groups: ["App development", "Government contacts"] },
-        { type: 'Company', name: "Continental Services", status: "Closed", lifecycleStage: "Customer", email: "concierge@continental.com", phone: "555-0155", address: "89 Hotel Circle", groups: ["Branding"] },
-        { type: 'Person', name: "Sarah Connor", company: "Cyberdyne Systems", title: "Security Chief", status: "Lead", lifecycleStage: "Lead", email: "sarah@cyberdyne.net", phone: "555-0199", groups: ["Government contacts"] },
-        { type: 'Person', name: "John Wick", company: "Continental Services", title: "Contractor", status: "Closed", lifecycleStage: "Customer", email: "j.wick@continental.com", phone: "555-0155", groups: ["Solopraneur"] },
-        { type: 'Person', name: "Ellen Ripley", company: "Weyland-Yutani", title: "Warrant Officer", status: "Contacted", lifecycleStage: "Lead", email: "ripley@nostromo.ship", phone: "555-0122", groups: ["Potential Partner"] },
-        { type: 'Person', name: "Carter Burke", company: "Weyland-Yutani", title: "Special Exec", status: "Lost", lifecycleStage: "Lost", email: "burke@company.net", phone: "555-0999", groups: ["Marketing Strategy"] },
+      // --- Companies ---
+      const companies = [
+        { type: 'Company', name: "Vertex Commerce", status: "Closed", lifecycleStage: "Customer", email: "hello@vertexcommerce.io", phone: "+1 415 234 5678", website: "https://vertexcommerce.io", address: "580 Market St, San Francisco, CA 94104", groups: ["E-commerce", "Key Account"], lastContact: { date: daysAgo(3).toLocaleDateString(), type: 'Meeting' } },
+        { type: 'Company', name: "Bloom Hospitality Group", status: "Proposal", lifecycleStage: "Lead", email: "contact@bloomhospitality.com", phone: "+1 212 876 5432", website: "https://bloomhospitality.com", address: "245 Park Ave, New York, NY 10167", groups: ["Hospitality"], lastContact: { date: daysAgo(7).toLocaleDateString(), type: 'Call' } },
+        { type: 'Company', name: "NorthPoint Realty", status: "Negotiation", lifecycleStage: "Lead", email: "info@northpointrealty.com", phone: "+1 312 456 7890", website: "https://northpointrealty.com", address: "233 S Wacker Dr, Chicago, IL 60606", groups: ["Real Estate"], lastContact: { date: daysAgo(2).toLocaleDateString(), type: 'Email' } },
+        { type: 'Company', name: "Stackly SaaS", status: "Lead", lifecycleStage: "Lead", email: "sales@stackly.io", phone: "+1 737 800 1200", website: "https://stackly.io", address: "701 Brazos St, Austin, TX 78701", groups: ["SaaS"], lastContact: { date: daysAgo(14).toLocaleDateString(), type: 'Email' } },
+        { type: 'Company', name: "Crest Brand Studio", status: "Closed", lifecycleStage: "Customer", email: "hello@crestbrand.co", phone: "+1 310 555 9900", website: "https://crestbrand.co", address: "8721 Santa Monica Blvd, Los Angeles, CA 90069", groups: ["Branding", "Key Account"], lastContact: { date: daysAgo(1).toLocaleDateString(), type: 'Call' } },
       ];
 
-      const createdContacts = [];
-      for (const d of demoData) {
-         const docRef = await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'contacts'), { ...d, createdAt: serverTimestamp() });
-         createdContacts.push({ name: d.name, id: docRef.id });
+      // --- People ---
+      const people = [
+        { type: 'Person', name: "Marcus Webb", title: "CEO", company: "Vertex Commerce", status: "Closed", lifecycleStage: "Customer", email: "marcus.webb@vertexcommerce.io", phone: "+1 415 234 5679", birthday: "1982-03-15", groups: ["E-commerce", "Key Account", "Referral"], lastContact: { date: daysAgo(3).toLocaleDateString(), type: 'Meeting' } },
+        { type: 'Person', name: "Priya Nair", title: "Head of Marketing", company: "Vertex Commerce", status: "Closed", lifecycleStage: "Customer", email: "priya@vertexcommerce.io", phone: "+1 415 234 5680", groups: ["E-commerce"], lastContact: { date: daysAgo(5).toLocaleDateString(), type: 'Email' } },
+        { type: 'Person', name: "Daniel Bloom", title: "Managing Director", company: "Bloom Hospitality Group", status: "Proposal", lifecycleStage: "Lead", email: "daniel@bloomhospitality.com", phone: "+1 212 876 5433", birthday: "1975-11-22", groups: ["Hospitality"], lastContact: { date: daysAgo(7).toLocaleDateString(), type: 'Call' } },
+        { type: 'Person', name: "Sofia Marchetti", title: "VP of Sales", company: "NorthPoint Realty", status: "Negotiation", lifecycleStage: "Lead", email: "sofia.m@northpointrealty.com", phone: "+1 312 456 7891", groups: ["Real Estate"], lastContact: { date: daysAgo(2).toLocaleDateString(), type: 'Email' } },
+        { type: 'Person', name: "James Thornton", title: "Founder & CTO", company: "Stackly SaaS", status: "Lead", lifecycleStage: "Lead", email: "james@stackly.io", phone: "+1 737 800 1201", birthday: "1990-06-08", groups: ["SaaS"], lastContact: { date: daysAgo(14).toLocaleDateString(), type: 'Email' } },
+        { type: 'Person', name: "Rachel Kim", title: "Creative Director", company: "Crest Brand Studio", status: "Closed", lifecycleStage: "Customer", email: "rachel@crestbrand.co", phone: "+1 310 555 9901", groups: ["Branding", "Key Account"], lastContact: { date: daysAgo(1).toLocaleDateString(), type: 'Call' } },
+        { type: 'Person', name: "Tom Okafor", title: "Independent Consultant", company: "", status: "Contacted", lifecycleStage: "Lead", email: "tom.okafor@gmail.com", phone: "+1 646 222 3344", groups: ["Referral"], lastContact: { date: daysAgo(10).toLocaleDateString(), type: 'Call' } },
+      ];
+
+      const createdContacts: any[] = [];
+      for (const d of [...companies, ...people]) {
+        const docRef = await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'contacts'), { ...d, createdAt: serverTimestamp() });
+        createdContacts.push({ name: d.name, id: docRef.id });
       }
 
-      const demoActivities = [
-        { contactName: "Sarah Connor", type: "Call", content: "Discussed the new security protocols. They are interested in the AI integration." },
-        { contactName: "Sarah Connor", type: "Email", content: "Sent over the proposal for Q4. Awaiting feedback on the budget." },
-        { contactName: "John Wick", type: "Meeting", content: "Met for lunch. discussed the new 'cleaning' services contract. Very urgent." },
-        { contactName: "Cyberdyne Systems", type: "Note", content: "Key account. Needs follow-up every 2 weeks." },
-        { contactName: "Ellen Ripley", type: "Email", content: "She mentioned issues with current logistics. Good opportunity to pitch our tracking software." },
-        { contactName: "Continental Services", type: "Call", content: "Front desk called to confirm the reservation system upgrade." }
+      // --- Activity Notes ---
+      const activities = [
+        { contactName: "Marcus Webb", type: "Meeting", content: "Quarterly review at their SF office. Signed off on the Q2 social campaign — $28k. They want to expand to LinkedIn ads next quarter." },
+        { contactName: "Marcus Webb", type: "Call", content: "Marcus called to check on creative timeline. Confirmed delivery by end of month. Very happy with the brand refresh." },
+        { contactName: "Priya Nair", type: "Email", content: "Sent Priya the updated UTM tracking sheet and campaign brief. She needs approval from Marcus before we proceed with influencer outreach." },
+        { contactName: "Daniel Bloom", type: "Call", content: "30-min discovery call. Bloom Hospitality wants a full rebrand for 3 hotel properties. Budget range: $60k–$90k. Very promising lead." },
+        { contactName: "Daniel Bloom", type: "Email", content: "Sent over our agency deck and 2 case studies from the hospitality vertical. Waiting for response." },
+        { contactName: "Sofia Marchetti", type: "Email", content: "Sofia reviewed our proposal. She has questions about the lead generation scope and wants to negotiate on retainer terms. Scheduled follow-up for next week." },
+        { contactName: "Sofia Marchetti", type: "Note", content: "Key stakeholder — decision maker. She prefers WhatsApp for quick questions. Budget approved up to $15k/month." },
+        { contactName: "James Thornton", type: "Email", content: "Cold outreach sent. Pitched our SaaS content marketing package. No reply yet — follow up in 1 week." },
+        { contactName: "Rachel Kim", type: "Call", content: "Rachel confirmed the new brand guidelines are approved. She needs 5 social media templates by Friday. Straightforward deliverable." },
+        { contactName: "Tom Okafor", type: "Call", content: "Tom referred us to NorthPoint Realty. Great connection — should send a thank-you and discuss a referral commission structure." },
+        { contactName: "Vertex Commerce", type: "Note", content: "Key account — $28k closed this quarter. Upsell opportunity: LinkedIn Ads and email automation. Renewal due in 3 months." },
+        { contactName: "Crest Brand Studio", type: "Note", content: "Long-term client since 2023. Always pays on time. Potential for white-label partnership." },
       ];
 
-      for (const act of demoActivities) {
+      for (const act of activities) {
         const contact = createdContacts.find(c => c.name === act.contactName);
         if (contact) {
-            await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'notes'), {
-                contactId: contact.id, content: act.content, type: act.type, createdAt: serverTimestamp()
-            });
-             await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'contacts', contact.id), {
-                lastContact: { date: new Date().toLocaleDateString(), type: act.type }
-             });
+          await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'notes'), {
+            contactId: contact.id, content: act.content, type: act.type, createdAt: serverTimestamp()
+          });
         }
       }
 
-      const demoTasks = [
-          { text: "Send updated contract", description: "Include the new clause about AI safety.", dueDate: new Date(Date.now() + 86400000).toISOString().split('T')[0], contactName: "Sarah Connor", isDone: false },
-          { text: "Lunch with John", description: "Discuss the continental breakfast menu.", dueDate: new Date(Date.now() + 172800000).toISOString().split('T')[0], contactName: "John Wick", isDone: false },
-          { text: "Follow up on shipment", description: "Ensure the cargo is secure.", dueDate: new Date(Date.now() - 86400000).toISOString().split('T')[0], contactName: "Ellen Ripley", isDone: false }
+      // --- Tasks ---
+      const tasks = [
+        { text: "Send revised proposal to Bloom Hospitality", description: "Include 3 pricing tiers and case studies from hotel clients.", dueDate: daysFromNow(2).toISOString().split('T')[0], contactName: "Daniel Bloom", isDone: false },
+        { text: "Follow up with James Thornton (Stackly)", description: "No reply to cold email. Try LinkedIn message.", dueDate: daysFromNow(3).toISOString().split('T')[0], contactName: "James Thornton", isDone: false },
+        { text: "Deliver social media templates to Rachel", description: "5 templates in Figma format. Check brand guidelines first.", dueDate: daysFromNow(1).toISOString().split('T')[0], contactName: "Rachel Kim", isDone: false },
+        { text: "Negotiate retainer terms with Sofia", description: "She wants a 10% discount on the 6-month plan. Check with finance.", dueDate: daysFromNow(5).toISOString().split('T')[0], contactName: "Sofia Marchetti", isDone: false },
+        { text: "Send referral thank-you to Tom Okafor", description: "Handwritten note + referral commission agreement PDF.", dueDate: daysFromNow(1).toISOString().split('T')[0], contactName: "Tom Okafor", isDone: false },
+        { text: "Monthly report for Vertex Commerce", description: "Include campaign metrics, CTR, conversions, and Q3 recommendations.", dueDate: daysFromNow(7).toISOString().split('T')[0], contactName: "Marcus Webb", isDone: false },
+        { text: "Upsell meeting with Priya (LinkedIn Ads)", description: "Prepare ROI projections and competitive benchmarks.", dueDate: daysFromNow(10).toISOString().split('T')[0], contactName: "Priya Nair", isDone: false },
       ];
 
-      for (const task of demoTasks) {
-          const contact = createdContacts.find(c => c.name === task.contactName);
-          await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'todos'), { ...task, contactId: contact ? contact.id : null, contactName: contact ? contact.name : '', createdAt: serverTimestamp() });
+      for (const task of tasks) {
+        const contact = createdContacts.find(c => c.name === task.contactName);
+        await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'todos'), {
+          ...task, contactId: contact?.id || null, contactName: contact?.name || '', createdAt: serverTimestamp()
+        });
       }
 
-      const sampleEventTypes = [
-        { title: "15 Minute Meeting", duration: "15", description: "Short sync up.", slug: "15-min", color: "bg-blue-500" },
-        { title: "30 Minute Meeting", duration: "30", description: "Standard meeting slot.", slug: "30-min", color: "bg-purple-500" },
-        { title: "60 Minute Meeting", duration: "60", description: "Deep dive session.", slug: "60-min", color: "bg-orange-500" }
+      // --- Event Types ---
+      const eventTypes = [
+        { title: "15-Min Discovery Call", duration: "15", description: "Quick intro call to understand your goals.", slug: "discovery-15", color: "bg-blue-500" },
+        { title: "30-Min Strategy Session", duration: "30", description: "Deep dive into your marketing strategy.", slug: "strategy-30", color: "bg-purple-500" },
+        { title: "60-Min Proposal Review", duration: "60", description: "Walk through our proposal in detail.", slug: "proposal-60", color: "bg-orange-500" },
       ];
-      for (const et of sampleEventTypes) { await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'event_types'), { ...et, createdAt: serverTimestamp() }); }
+      for (const et of eventTypes) { await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'event_types'), { ...et, createdAt: serverTimestamp() }); }
 
-      const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(14, 0, 0, 0);
-      await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'scheduled_events'), { 
-          eventTypeTitle: "30 Minute Meeting", attendeeName: "Sarah Connor", attendeeEmail: "sarah@cyberdyne.net", startTime: { seconds: Math.floor(tomorrow.getTime() / 1000) }, color: "bg-purple-500", status: "confirmed", createdAt: serverTimestamp()
-      });
+      // --- Scheduled Meetings ---
+      const meeting1 = daysFromNow(2); meeting1.setHours(10, 0, 0, 0);
+      const meeting2 = daysFromNow(5); meeting2.setHours(14, 0, 0, 0);
+      const danielContact = createdContacts.find(c => c.name === 'Daniel Bloom');
+      const sofiaContact = createdContacts.find(c => c.name === 'Sofia Marchetti');
+      if (danielContact) {
+        await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'scheduled_events'), {
+          eventTypeTitle: "30-Min Strategy Session", attendeeName: "Daniel Bloom", attendeeEmail: "daniel@bloomhospitality.com",
+          contactId: danielContact.id, startTime: { seconds: Math.floor(meeting1.getTime() / 1000) }, color: "bg-purple-500", status: "confirmed", createdAt: serverTimestamp()
+        });
+      }
+      if (sofiaContact) {
+        await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'scheduled_events'), {
+          eventTypeTitle: "60-Min Proposal Review", attendeeName: "Sofia Marchetti", attendeeEmail: "sofia.m@northpointrealty.com",
+          contactId: sofiaContact.id, startTime: { seconds: Math.floor(meeting2.getTime() / 1000) }, color: "bg-orange-500", status: "confirmed", createdAt: serverTimestamp()
+        });
+      }
 
       console.log("Demo data populated!");
-    } catch (error) { }
+    } catch (error) { console.error('Seed error', error); }
+    finally { setIsSeeding(false); }
   };
 
   const handleCompose = (initialData: { to?: string, subject?: string, body?: string, cc?: string, bcc?: string } = {}) => {
       setComposeTo(initialData.to || ''); setComposeSubject(initialData.subject || ''); setComposeBody(initialData.body || ''); setShowCcBcc(!!initialData.cc || !!initialData.bcc); setIsComposeOpen(true); setIsComposeMinimized(false); setComposeAttachments([]);
+  };
+
+  const handleSaveDraft = async () => {
+      if (!composeSubject && !composeBody && !composeTo) return;
+      const draftData = {
+          sender: "Me",
+          senderEmail: user?.email || "me@example.com",
+          subject: composeSubject || '(No Subject)',
+          snippet: composeBody.replace(/<[^>]*>?/gm, '').substring(0, 50),
+          body: composeBody,
+          to: composeTo,
+          isRead: true,
+          isStarred: false,
+          folder: 'drafts',
+          attachments: composeAttachments,
+      };
+      // Optimistic update — show draft immediately; Firestore snapshot will replace it
+      const localDraft = { ...draftData, id: `draft-${Date.now()}`, date: new Date(), _optimistic: true };
+      setEmails((prev: any[]) => [localDraft, ...prev]);
+      // Also persist to Firestore so it survives refresh
+      if (user) {
+          try {
+              await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'email'), { ...draftData, date: serverTimestamp() });
+          } catch (e) {
+              // Firestore write failed silently — local state already updated above
+          }
+      }
+      setIsComposeOpen(false);
+      setComposeTo(''); setComposeSubject(''); setComposeBody(''); setComposeAttachments([]);
   };
 
   const handleComposeSubmit = async (e: React.FormEvent, isScheduled: boolean = false, scheduledAt: Date | null = null) => {
@@ -1242,7 +1365,26 @@ ${cleanText.substring(0, 3000)}
   
   const selectedContact = useMemo(() => contacts.find(c => c.id === selectedContactId), [contacts, selectedContactId]);
 
-  if (authLoading) return <div className="flex h-screen items-center justify-center text-slate-500">Loading...</div>;
+  if (authLoading) return (
+    <div className="flex h-screen items-center justify-center bg-gradient-to-br from-slate-50 to-emerald-50">
+      <div className="flex flex-col items-center gap-5 animate-pulse">
+        <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center shadow-xl shadow-emerald-200">
+          <svg className="w-9 h-9 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        </div>
+        <div className="text-center">
+          <p className="text-xl font-bold text-slate-800">SimpleCRM</p>
+          <p className="text-sm text-slate-400 mt-1">Loading your workspace…</p>
+        </div>
+        <div className="flex gap-1.5 mt-1">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce" style={{ animationDelay: '0ms' }}></span>
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce" style={{ animationDelay: '150ms' }}></span>
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce" style={{ animationDelay: '300ms' }}></span>
+        </div>
+      </div>
+    </div>
+  );
   if (!user) return <ErrorBoundary><AuthPage onGoogleLogin={(accessToken: string) => {
     if (accessToken && accessToken !== "mock_gmail_token") {
       setGmailAccessToken(accessToken);
@@ -1282,7 +1424,7 @@ ${cleanText.substring(0, 3000)}
           <div className={`flex-1 overflow-auto ${view === 'email' ? 'p-0' : selectedContactId ? '' : 'p-3 sm:p-4 md:p-8'}`}>
             <div className={`mx-auto h-full ${view === 'email' ? 'max-w-full' : 'max-w-7xl'}`}>
               {view === 'dashboard' && !selectedContactId && (
-                  <Dashboard contacts={contacts} notes={notes} todos={todos} emails={emails} scheduledEvents={scheduledEvents} setView={setView} onSeedData={handleSeedData} onUpdateNote={handleUpdateNote} onDeleteNote={handleDeleteNote} user={user} onNavigate={(id: string) => { setSelectedContactId(id); setView('contacts'); }} onToggleTodo={handleToggleTodo} onDeleteTodo={handleDeleteTodo} onSpeak={handleSpeak} isSpeaking={isSpeaking} />
+                  <Dashboard contacts={contacts} notes={notes} todos={todos} emails={emails} scheduledEvents={scheduledEvents} setView={setView} onSeedData={handleSeedData} onClearData={handleClearAllData} isSeeding={isSeeding} onUpdateNote={handleUpdateNote} onDeleteNote={handleDeleteNote} user={user} onNavigate={(id: string) => { setSelectedContactId(id); setView('contacts'); }} onToggleTodo={handleToggleTodo} onDeleteTodo={handleDeleteTodo} onSpeak={handleSpeak} isSpeaking={isSpeaking} />
               )}
               {view === 'calendar' && !selectedContactId && (
                   <CalendarPage eventTypes={eventTypes} scheduledEvents={scheduledEvents} bookingPages={bookingPages} onCreateBookingPage={handleCreateBookingPage} onUpdateBookingPage={handleUpdateBookingPage} onDeleteBookingPage={handleDeleteBookingPage} todos={todos} onCreateEventType={handleCreateEventType} onUpdateEventType={handleUpdateEventType} onDeleteEventType={handleDeleteEventType} isGoogleConnected={isGoogleCalendarConnected} onConnectGoogle={handleConnectGoogleCalendar} onDisconnectGoogle={handleDisconnectGoogleCalendar} googleEvents={googleEvents} onBookMeeting={handleAddScheduledEvent} onNavigateToSettings={() => setView('settings')} onCompose={handleCompose} contacts={contacts} onNavigate={(id: string) => { setSelectedContactId(id); setView('contacts'); }} onUpdateScheduledEvent={handleUpdateScheduledEvent} onDeleteScheduledEvent={handleDeleteScheduledEvent} teamMembers={teamMembers} initialBooking={initialCalendarBooking} onClearInitialBooking={() => setInitialCalendarBooking(null)} user={user} />
@@ -1293,7 +1435,7 @@ ${cleanText.substring(0, 3000)}
               {view === 'groups' && !selectedContactId && (
                   <GroupsPage contacts={contacts} tagGroups={tagGroups} onGroupClick={(filter: string) => { setFilterType(filter); setView('contacts'); }} onAddNewGroup={() => setIsGroupModalOpen(true)} onEditGroup={handleEditGroup} onDeleteGroup={handleDeleteGroup} onCompose={handleCompose} />
               )}
-              {view === 'settings' && !selectedContactId && <SettingsPage teamMembers={teamMembers} onAddTeamMember={handleAddTeamMember} onUpdateTeamMember={handleUpdateTeamMember} onDeleteTeamMember={handleDeleteTeamMember} currentUser={user} customFields={customFields} onAddCustomField={handleAddCustomField} onDeleteCustomField={handleDeleteCustomField} />}
+              {view === 'settings' && !selectedContactId && <SettingsPage teamMembers={teamMembers} onAddTeamMember={handleAddTeamMember} onUpdateTeamMember={handleUpdateTeamMember} onDeleteTeamMember={handleDeleteTeamMember} currentUser={user} customFields={customFields} onAddCustomField={handleAddCustomField} onDeleteCustomField={handleDeleteCustomField} onConnectGmail={handleConnectGoogle} onConnectGoogleCalendar={handleConnectGoogleCalendar} isGmailConnected={isGoogleEmailConnected} isCalendarConnected={isGoogleCalendarConnected} />}
               {view === 'todo' && !selectedContactId && (
                   <TodoPage user={user} contacts={contacts} onNavigate={(id: string) => { setSelectedContactId(id); setView('contacts'); }} todos={todos} onToggle={handleToggleTodo} onDelete={handleDeleteTodo} onAdd={handleAddTodo} />
               )}
@@ -1468,7 +1610,10 @@ ${cleanText.substring(0, 3000)}
                                   <button type="button" className="p-2 text-slate-500 hover:bg-slate-100 rounded-full transition-all"><MoreVertical className="w-5 h-5" /></button>
                               </div>
                           </div>
-                          <button type="button" onClick={() => setIsComposeOpen(false)} className="p-2 text-slate-500 hover:text-red-500 hover:bg-red-50 rounded-full transition-all" title="Discard"><Trash2 className="w-5 h-5" /></button>
+                          <div className="flex items-center gap-1">
+                              <button type="button" onClick={handleSaveDraft} className="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-all" title="Save Draft"><Save className="w-5 h-5" /></button>
+                              <button type="button" onClick={() => setIsComposeOpen(false)} className="p-2 text-slate-500 hover:text-red-500 hover:bg-red-50 rounded-full transition-all" title="Discard"><Trash2 className="w-5 h-5" /></button>
+                          </div>
                       </div>
                   </form>
               )}

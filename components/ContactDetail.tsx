@@ -35,6 +35,7 @@ export const ContactDetail = ({ contact, allContacts, notes = [], emails = [], o
       { role: 'assistant', text: `I've analyzed <b>${contact.name}'s</b> history. What would you like to know?` }
   ]);
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
   // Safe access to liveCallProps
@@ -175,9 +176,10 @@ export const ContactDetail = ({ contact, allContacts, notes = [], emails = [], o
 
       const apiKey = getApiKey();
       if (!apiKey) {
-          alert("API Key missing.");
+          setChatError("API key not configured. Please check your environment settings.");
           return;
       }
+      setChatError(null);
 
       const userMsg = { role: 'user', text };
       setChatMessages(prev => [...prev, userMsg]);
@@ -248,7 +250,8 @@ export const ContactDetail = ({ contact, allContacts, notes = [], emails = [], o
   };
 
   const handleAddWidget = () => { if (newWidgetName && newWidgetUrl) { const newWidget = { id: Date.now().toString(), name: newWidgetName, url: newWidgetUrl }; const updatedWidgets = [...(contact.widgets || []), newWidget]; onUpdate(contact.id, { widgets: updatedWidgets }); setNewWidgetName(''); setNewWidgetUrl(''); setIsAddingWidget(false); } };
-  const handleAddAttachment = async (e: any) => { const file = e.target.files?.[0]; if (!file) return; if (file.size > 1024 * 1024 * 5) { alert("File too large (max 5MB)."); return; } try { const base64 = await fileToBase64(file); const newAttachment = { id: Date.now().toString(), name: file.name, size: file.size, type: file.type, data: base64, createdAt: new Date().toISOString() }; const updatedAttachments = [...(contact.attachments || []), newAttachment]; onUpdate(contact.id, { attachments: updatedAttachments }); } catch (err) { console.error(err); } };
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const handleAddAttachment = async (e: any) => { const file = e.target.files?.[0]; if (!file) return; if (file.size > 1024 * 1024 * 5) { setAttachError("File too large (max 5MB)."); setTimeout(() => setAttachError(null), 4000); return; } setAttachError(null); try { const base64 = await fileToBase64(file); const newAttachment = { id: Date.now().toString(), name: file.name, size: file.size, type: file.type, data: base64, createdAt: new Date().toISOString() }; const updatedAttachments = [...(contact.attachments || []), newAttachment]; onUpdate(contact.id, { attachments: updatedAttachments }); } catch (err) { console.error(err); } };
   const handleDeleteAttachment = (attId: string) => { const updatedAttachments = contact.attachments?.filter((a: any) => a.id !== attId) || []; onUpdate(contact.id, { attachments: updatedAttachments }); };
   const handleUpdateWidget = (widgetId: string, newData: any) => { const updatedWidgets = contact.widgets.map((w: any) => w.id === widgetId ? { ...w, ...newData } : w); onUpdate(contact.id, { widgets: updatedWidgets }); };
   const handleDeleteWidget = (widgetId: string) => { const updatedWidgets = contact.widgets.filter((w: any) => w.id !== widgetId); onUpdate(contact.id, { widgets: updatedWidgets }); };
@@ -317,6 +320,7 @@ export const ContactDetail = ({ contact, allContacts, notes = [], emails = [], o
                   )}
               </div>
               <div className="p-4 border-t space-y-3">
+                  {chatError && <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{chatError}</p>}
                   <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
                       <button onClick={() => handleSendMessage("Summarize our interaction history in an organized way.")} className="shrink-0 px-3 py-1.5 rounded-full border border-slate-200 text-[10px] font-bold uppercase tracking-wider text-slate-600 hover:bg-slate-50">History Summary</button>
                       <button onClick={() => handleSendMessage("Are there any outstanding tasks for this contact?")} className="shrink-0 px-3 py-1.5 rounded-full border border-slate-200 text-[10px] font-bold uppercase tracking-wider text-slate-600 hover:bg-slate-50">Pending Tasks</button>
@@ -520,7 +524,7 @@ export const ContactDetail = ({ contact, allContacts, notes = [], emails = [], o
           </div>
         </div>
         <div className="border-t border-slate-100 pt-6"><h3 className="text-sm font-bold text-slate-800 uppercase tracking-widest mb-4">Important Links</h3><div className="space-y-2">{contact.widgets?.map((widget: any) => (<WidgetItem key={widget.id} widget={widget} onUpdate={handleUpdateWidget} onDelete={handleDeleteWidget} />))}</div>{!isAddingWidget ? (<button onClick={() => setIsAddingWidget(true)} className="w-full border-2 border-dashed border-slate-200 rounded-xl py-3 text-xs font-bold text-slate-400 hover:border-emerald-400 hover:text-emerald-600 transition-all flex items-center justify-center gap-2"><Plus className="w-4 h-4" /> Link Tool</button>) : (<div className="bg-slate-50 p-4 rounded-xl space-y-3 shadow-inner"><input className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-lg outline-none" placeholder="Name" value={newWidgetName} onChange={e => setNewWidgetName(e.target.value)} /><input className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-lg outline-none" placeholder="https://..." value={newWidgetUrl} onChange={e => setNewWidgetUrl(e.target.value)} /><div className="flex justify-end gap-2"><button onClick={() => setIsAddingWidget(false)} className="text-[10px] font-bold text-slate-400">Cancel</button><button onClick={handleAddWidget} className="bg-slate-800 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg">Add</button></div></div>)}</div>
-        <div className="border-t border-slate-100 pt-6 flex flex-col pb-20"><h3 className="text-sm font-bold text-slate-800 uppercase tracking-widest mb-4">Files</h3><label className="cursor-pointer text-[10px] font-bold text-blue-600 uppercase bg-blue-50 px-2 py-1 rounded-lg mb-4 text-center">Upload<input type="file" className="hidden" onChange={handleAddAttachment} /></label><div className="space-y-3">{contact.attachments?.map((att: any) => (<div key={att.id} className="flex items-center gap-3 p-2.5 border border-slate-100 rounded-xl bg-slate-50/50 hover:bg-white transition-all cursor-pointer" onClick={() => setPreviewFile(att)}><FileText className="w-4 h-4 text-slate-400" /><div className="flex-1 min-0 text-xs font-bold text-slate-800 truncate">{att.name}</div><button onClick={(e) => {e.stopPropagation(); handleDeleteAttachment(att.id);}} className="p-1.5 text-slate-400 hover:text-red-500"><X className="w-4 h-4" /></button></div>))}</div></div>
+        <div className="border-t border-slate-100 pt-6 flex flex-col pb-20"><h3 className="text-sm font-bold text-slate-800 uppercase tracking-widest mb-4">Files</h3><label className="cursor-pointer text-[10px] font-bold text-blue-600 uppercase bg-blue-50 px-2 py-1 rounded-lg mb-2 text-center">Upload<input type="file" className="hidden" onChange={handleAddAttachment} /></label>{attachError && <p className="text-[10px] text-red-500 bg-red-50 border border-red-200 rounded px-2 py-1 mb-2">{attachError}</p>}<div className="space-y-3">{contact.attachments?.map((att: any) => (<div key={att.id} className="flex items-center gap-3 p-2.5 border border-slate-100 rounded-xl bg-slate-50/50 hover:bg-white transition-all cursor-pointer" onClick={() => setPreviewFile(att)}><FileText className="w-4 h-4 text-slate-400" /><div className="flex-1 min-0 text-xs font-bold text-slate-800 truncate">{att.name}</div><button onClick={(e) => {e.stopPropagation(); handleDeleteAttachment(att.id);}} className="p-1.5 text-slate-400 hover:text-red-500"><X className="w-4 h-4" /></button></div>))}</div></div>
       </div>
 
       {previewFile && (

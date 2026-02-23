@@ -2,8 +2,14 @@ import React, { useState } from 'react';
 import { Plus, Edit3, Trash2, Mail, User, Shield, Check, X, Lock, Eye, AlertTriangle, Crown, List as ListIcon, Calendar as CalendarIcon, Type as TypeIcon, Hash, Building2, UserCircle2, FileUp } from 'lucide-react';
 import { ImportModal } from './ImportModal';
 
-export const SettingsPage = ({ teamMembers = [], onAddTeamMember, onUpdateTeamMember, onDeleteTeamMember, currentUser, customFields = [], onAddCustomField, onDeleteCustomField, onImportContacts }: any) => {
+export const SettingsPage = ({ teamMembers = [], onAddTeamMember, onUpdateTeamMember, onDeleteTeamMember, currentUser, customFields = [], onAddCustomField, onDeleteCustomField, onImportContacts, onConnectGmail, onConnectGoogleCalendar, isGmailConnected = false, isCalendarConnected = false }: any) => {
   const [activeTab, setActiveTab] = useState('team_members');
+  const [comingSoonMsg, setComingSoonMsg] = useState<string | null>(null);
+
+  const showComingSoon = (name: string) => {
+      setComingSoonMsg(`${name} integration is coming soon!`);
+      setTimeout(() => setComingSoonMsg(null), 3000);
+  };
   // Simulating Current User Role for demonstration purposes
   const [currentUserRole, setCurrentUserRole] = useState<'Super Admin' | 'Admin' | 'Assistant' | 'Member'>('Super Admin');
 
@@ -25,17 +31,15 @@ export const SettingsPage = ({ teamMembers = [], onAddTeamMember, onUpdateTeamMe
 
   // Helper to determine if the current user can delete a specific target user
   const canDeleteUser = (targetRole: string, member: any) => {
-      // Cannot delete yourself
+      // Allow deleting duplicate "You" entries (same uid/email but not the canonical doc id === currentUser.uid)
+      const isDuplicateSelf = (member.uid === currentUser?.uid || member.email?.toLowerCase() === currentUser?.email?.toLowerCase()) && member.id !== currentUser?.uid;
+      if (isDuplicateSelf) return true;
+
+      // Cannot delete the canonical self entry
       if (member.uid === currentUser?.uid) return false;
 
-      if (currentUserRole === 'Super Admin') {
-          return true;
-      }
-
-      if (currentUserRole === 'Admin') {
-          return ['Assistant', 'Member'].includes(targetRole);
-      }
-
+      if (currentUserRole === 'Super Admin') return true;
+      if (currentUserRole === 'Admin') return ['Assistant', 'Member'].includes(targetRole);
       return false;
   };
 
@@ -194,8 +198,17 @@ export const SettingsPage = ({ teamMembers = [], onAddTeamMember, onUpdateTeamMe
           {activeTab === 'integrations' && canManageIntegrations && (
             <div className="space-y-6">
               <h3 className="text-lg font-semibold text-slate-800 border-b border-slate-100 pb-2">Integrations</h3>
+
+              {/* Coming Soon Toast */}
+              {comingSoonMsg && (
+                  <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 text-amber-800 text-sm font-medium px-4 py-3 rounded-lg animate-in fade-in slide-in-from-top-2">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      {comingSoonMsg}
+                  </div>
+              )}
+
               <div className="space-y-4">
-                 
+
                  {/* 1. Zoom */}
                  <div className="flex items-center justify-between p-4 border border-slate-200 rounded-lg hover:border-slate-300 transition-colors">
                     <div className="flex items-center gap-3">
@@ -207,7 +220,7 @@ export const SettingsPage = ({ teamMembers = [], onAddTeamMember, onUpdateTeamMe
                           <div className="text-xs text-slate-500">Video calls and webinars</div>
                        </div>
                     </div>
-                    <button type="button" className="px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 shadow-sm">Connect</button>
+                    <button type="button" onClick={() => showComingSoon('Zoom')} className="px-3 py-1.5 text-xs font-medium bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 border border-slate-200">Coming Soon</button>
                  </div>
 
                  {/* 2. Slack */}
@@ -221,7 +234,7 @@ export const SettingsPage = ({ teamMembers = [], onAddTeamMember, onUpdateTeamMe
                           <div className="text-xs text-slate-500">Receive notifications in channels</div>
                        </div>
                     </div>
-                    <button type="button" className="px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 shadow-sm">Connect</button>
+                    <button type="button" onClick={() => showComingSoon('Slack')} className="px-3 py-1.5 text-xs font-medium bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 border border-slate-200">Coming Soon</button>
                  </div>
 
                  {/* 3. LinkedIn Messaging */}
@@ -235,35 +248,41 @@ export const SettingsPage = ({ teamMembers = [], onAddTeamMember, onUpdateTeamMe
                           <div className="text-xs text-slate-500">Sync messages and InMails</div>
                        </div>
                     </div>
-                    <button type="button" className="px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 shadow-sm">Connect</button>
+                    <button type="button" onClick={() => showComingSoon('LinkedIn Messaging')} className="px-3 py-1.5 text-xs font-medium bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 border border-slate-200">Coming Soon</button>
                  </div>
 
                  {/* 4. Gmail */}
-                 <div className="flex items-center justify-between p-4 border border-slate-200 rounded-lg hover:border-slate-300 transition-colors">
+                 <div className={`flex items-center justify-between p-4 border rounded-lg transition-colors ${isGmailConnected ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 hover:border-slate-300'}`}>
                     <div className="flex items-center gap-3">
                        <div className="w-10 h-10 bg-white border border-slate-100 rounded-lg flex items-center justify-center shadow-sm overflow-hidden p-1.5">
                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-full h-full"><path fill="#4caf50" d="M45,16.2l-5,2.75l-5,4.75L35,40h7c1.657,0,3-1.343,3-3V16.2z"/><path fill="#1e88e5" d="M3,16.2l3.614,1.71L13,23.7V40H6c-1.657,0-3-1.343-3-3V16.2z"/><polygon fill="#e53935" points="35,11.2 24,19.45 13,11.2 12,17 13,23.7 24,31.95 35,23.7 36,17"/><path fill="#c62828" d="M3,12.298V16.2l10,7.5V11.2L9.876,8.859C9.132,8.301,8.228,8,7.298,8h0C4.924,8,3,9.924,3,12.298z"/><path fill="#fbc02d" d="M45,12.298V16.2l-10,7.5V11.2l3.124-2.341C38.868,8.301,39.772,8,40.702,8h0C43.076,8,45,9.924,45,12.298z"/></svg>
                        </div>
                        <div>
                           <div className="font-medium text-slate-900">Gmail</div>
-                          <div className="text-xs text-slate-500">Sync emails and threads</div>
+                          <div className="text-xs text-slate-500">{isGmailConnected ? 'Connected — emails syncing' : 'Sync emails and threads'}</div>
                        </div>
                     </div>
-                    <button type="button" className="px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 shadow-sm">Connect</button>
+                    {isGmailConnected
+                        ? <span className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-100 rounded-lg"><Check className="w-3.5 h-3.5" /> Connected</span>
+                        : <button type="button" onClick={onConnectGmail} className="px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 shadow-sm">Connect</button>
+                    }
                  </div>
 
                  {/* 5. Google Calendar */}
-                 <div className="flex items-center justify-between p-4 border border-slate-200 rounded-lg hover:border-slate-300 transition-colors">
+                 <div className={`flex items-center justify-between p-4 border rounded-lg transition-colors ${isCalendarConnected ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 hover:border-slate-300'}`}>
                     <div className="flex items-center gap-3">
                        <div className="w-10 h-10 bg-white border border-slate-100 rounded-lg flex items-center justify-center shadow-sm overflow-hidden p-1.5">
                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-full h-full"><path fill="#29CC7A" d="M14 42V14H6v24c0 2.2 1.8 4 4 4h4z"/><path fill="#E04239" d="M34 14v28h4c2.2 0 4-1.8 4-4V14h-8z"/><path fill="#3B88F5" d="M14 42h20v-8H14z"/><path fill="#FBC02D" d="M14 14h20V6H14z"/><path fill="#29CC7A" d="M6 14h8v-8H10C7.8 6 6 7.8 6 10v4z"/><path fill="#E04239" d="M34 6v8h8v-4c0-2.2-1.8-4-4-4h-4z"/></svg>
                        </div>
                        <div>
                           <div className="font-medium text-slate-900">Google Calendar</div>
-                          <div className="text-xs text-slate-500">Sync meetings and events</div>
+                          <div className="text-xs text-slate-500">{isCalendarConnected ? 'Connected — events syncing' : 'Sync meetings and events'}</div>
                        </div>
                     </div>
-                    <button type="button" className="px-3 py-1.5 text-xs font-medium bg-white border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50 shadow-sm">Configure</button>
+                    {isCalendarConnected
+                        ? <span className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-100 rounded-lg"><Check className="w-3.5 h-3.5" /> Connected</span>
+                        : <button type="button" onClick={onConnectGoogleCalendar} className="px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 shadow-sm">Connect</button>
+                    }
                  </div>
 
                  {/* 6. Google Meet */}
@@ -277,7 +296,7 @@ export const SettingsPage = ({ teamMembers = [], onAddTeamMember, onUpdateTeamMe
                           <div className="text-xs text-slate-500">Video conferencing</div>
                        </div>
                     </div>
-                    <button type="button" className="px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 shadow-sm">Connect</button>
+                    <button type="button" onClick={() => showComingSoon('Google Meet')} className="px-3 py-1.5 text-xs font-medium bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 border border-slate-200">Coming Soon</button>
                  </div>
 
                  {/* 7. Office 365 Calendar */}
@@ -291,7 +310,7 @@ export const SettingsPage = ({ teamMembers = [], onAddTeamMember, onUpdateTeamMe
                           <div className="text-xs text-slate-500">Sync organization schedule</div>
                        </div>
                     </div>
-                    <button type="button" className="px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 shadow-sm">Connect</button>
+                    <button type="button" onClick={() => showComingSoon('Office 365 Calendar')} className="px-3 py-1.5 text-xs font-medium bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 border border-slate-200">Coming Soon</button>
                  </div>
 
                  {/* 8. Outlook Calendar */}
@@ -305,7 +324,7 @@ export const SettingsPage = ({ teamMembers = [], onAddTeamMember, onUpdateTeamMe
                           <div className="text-xs text-slate-500">Sync meetings and events</div>
                        </div>
                     </div>
-                    <button type="button" className="px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 shadow-sm">Connect</button>
+                    <button type="button" onClick={() => showComingSoon('Outlook Calendar')} className="px-3 py-1.5 text-xs font-medium bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 border border-slate-200">Coming Soon</button>
                  </div>
 
                  {/* 9. Microsoft Teams */}
@@ -319,7 +338,7 @@ export const SettingsPage = ({ teamMembers = [], onAddTeamMember, onUpdateTeamMe
                           <div className="text-xs text-slate-500">Conferencing & Chat</div>
                        </div>
                     </div>
-                    <button type="button" className="px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 shadow-sm">Connect</button>
+                    <button type="button" onClick={() => showComingSoon('Microsoft Teams')} className="px-3 py-1.5 text-xs font-medium bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 border border-slate-200">Coming Soon</button>
                  </div>
 
               </div>
