@@ -5,6 +5,35 @@ import { ACTIVITY_STYLES } from '../constants';
 import { RichTextEditor } from './RichTextEditor';
 import { formatDate, getInitials } from '../utils';
 
+// Convert markdown to HTML for notes that were imported as plain text markdown
+const markdownToHtml = (text: string): string => {
+    if (!text) return '';
+    // If it already contains HTML tags, return as-is
+    if (/<[a-z][\s\S]*>/i.test(text)) return text;
+    return text
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        // Headers
+        .replace(/^### (.+)$/gm, '<h3 class="font-bold text-base mt-3 mb-1">$1</h3>')
+        .replace(/^## (.+)$/gm, '<h2 class="font-bold text-lg mt-4 mb-1">$1</h2>')
+        .replace(/^# (.+)$/gm, '<h1 class="font-bold text-xl mt-4 mb-2">$1</h1>')
+        // Bold + italic
+        .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        // Links [text](url)
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" class="text-blue-600 underline" target="_blank" rel="noopener noreferrer">$1</a>')
+        // Bullet lists
+        .replace(/^[-*] (.+)$/gm, '<li class="ml-4 list-disc">$1</li>')
+        // Wrap consecutive <li> in <ul>
+        .replace(/(<li[^>]*>.*<\/li>\n?)+/g, (match) => `<ul class="my-1 space-y-0.5">${match}</ul>`)
+        // Paragraphs (double newline)
+        .replace(/\n\n+/g, '</p><p class="mb-2">')
+        // Single newlines → <br>
+        .replace(/\n/g, '<br>')
+        // Wrap in paragraph
+        .replace(/^/, '<p class="mb-2">').replace(/$/, '</p>');
+};
+
 export const NoteItem = ({ note, onUpdate, onDelete, userName = 'You', userPhoto, contactName, onNavigate, contactId }: any) => {
     const [isEditing, setIsEditing] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
@@ -144,9 +173,9 @@ export const NoteItem = ({ note, onUpdate, onDelete, userName = 'You', userPhoto
                </div>
                
                <div className="p-4 bg-white">
-                   <div 
-                       className="text-sm text-slate-700 prose prose-sm max-w-none" 
-                       dangerouslySetInnerHTML={{ __html: note.content }} 
+                   <div
+                       className="text-sm text-slate-700 prose prose-sm max-w-none"
+                       dangerouslySetInnerHTML={{ __html: markdownToHtml(note.content) }}
                        onClick={handleLinkClick}
                    />
                    

@@ -57,15 +57,24 @@ export const ImportModal = ({ isOpen, onClose, onImport, customFields = [], inli
                     if (h === 'type') initialMapping['type'] = header;
                     if (h === 'firstname' || h === 'first') initialMapping['firstName'] = header;
                     if (h === 'lastname' || h === 'last') initialMapping['lastName'] = header;
-                    if (h === 'name' || h === 'fullname') initialMapping['name'] = header;
-                    if (h.includes('email')) initialMapping['email'] = header;
-                    if (h.includes('phone') || h.includes('mobile')) initialMapping['phone'] = header;
-                    if (h.includes('company') || h.includes('employer')) initialMapping['company'] = header;
-                    if (h.includes('title') || h.includes('role')) initialMapping['title'] = header;
+                    if (h === 'name' || h === 'fullname' || h === 'contactname') initialMapping['name'] = header;
+                    // Primary Email takes priority over All Email
+                    if (h === 'primaryemail') initialMapping['email'] = header;
+                    else if (h.includes('email') && !initialMapping['email']) initialMapping['email'] = header;
+                    // Primary Phone takes priority
+                    if (h === 'primaryphone') initialMapping['phone'] = header;
+                    else if ((h.includes('phone') || h.includes('mobile')) && !initialMapping['phone']) initialMapping['phone'] = header;
+                    // Prefer exact "companyname" over partial matches like "companycountry"
+                    if (h === 'companyname' || h === 'company' || h === 'employer') initialMapping['company'] = header;
+                    else if ((h.includes('company') || h.includes('employer')) && !initialMapping['company']) initialMapping['company'] = header;
+                    if (h === 'jobtitle' || h === 'title' || h.includes('role')) initialMapping['title'] = header;
                     if (h.includes('site') || h.includes('web')) initialMapping['website'] = header;
-                    if (h.includes('address') || h.includes('location')) initialMapping['address'] = header;
-                    if (h.includes('note') || h.includes('history')) initialMapping['notes'] = header;
-                    if (h.includes('bio') || h.includes('background')) initialMapping['background'] = header;
+                    // Prefer "Primary Street 1" — explicitly exclude Street 2/City/State/Zip/Country
+                    if (h === 'primarystreet1') initialMapping['address'] = header;
+                    else if (h === 'primarystreet' && !initialMapping['address']) initialMapping['address'] = header;
+                    else if ((h.includes('address') || h.includes('location')) && !initialMapping['address'] && !h.includes('2') && !h.includes('city') && !h.includes('state') && !h.includes('zip') && !h.includes('country')) initialMapping['address'] = header;
+                    if (h === 'notes' || h.includes('history')) initialMapping['notes'] = header;
+                    if (h.includes('bio') || h.includes('background') || h === 'backgroundinfo') initialMapping['background'] = header;
                 });
                 setMapping(initialMapping);
                 setStep('mapping');
@@ -77,27 +86,38 @@ export const ImportModal = ({ isOpen, onClose, onImport, customFields = [], inli
     const handleImport = async () => {
         setStep('importing');
         const contactsToImport = [];
-        
+
+        console.log('[Import] Starting. mapping =', JSON.stringify(mapping));
+        console.log('[Import] Total rows =', rows.length);
+        console.log('[Import] Sample row[0] keys =', rows[0] ? Object.keys(rows[0]) : 'none');
+        console.log('[Import] Sample row[0] =', JSON.stringify(rows[0]));
+
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i];
-            
-            // Determine type
-            const rawType = mapping['type'] ? String(row[mapping['type']]).toLowerCase() : '';
+
+            // Determine type — handles "Contact"→Person, "Company"→Company
+            const rawType = mapping['type'] ? String(row[mapping['type']] || '').toLowerCase() : '';
             let contactType = 'Person';
-            if (rawType.includes('company')) {
-                contactType = 'Company';
-            } else if (rawType.includes('contact')) {
-                contactType = 'Person';
-            } else {
-                contactType = mapping['company'] && !mapping['firstName'] && !mapping['name'] ? 'Company' : 'Person';
-            }
+            if (rawType.includes('company')) contactType = 'Company';
+            else if (rawType.includes('contact') || rawType.includes('person')) contactType = 'Person';
+            else contactType = (mapping['company'] && !mapping['firstName'] && !mapping['name']) ? 'Company' : 'Person';
 
             // Construct name
-            let fullName = row[mapping['name']] || '';
-            if (!fullName && (row[mapping['firstName']] || row[mapping['lastName']])) {
-                fullName = `${row[mapping['firstName']] || ''} ${row[mapping['lastName']] || ''}`.trim();
+            const firstVal = mapping['firstName'] ? (row[mapping['firstName']] || '').toString().trim() : '';
+            const lastVal = mapping['lastName'] ? (row[mapping['lastName']] || '').toString().trim() : '';
+            const nameVal = mapping['name'] ? (row[mapping['name']] || '').toString().trim() : '';
+            const companyVal = mapping['company'] ? (row[mapping['company']] || '').toString().trim() : '';
+
+            let fullName = nameVal;
+            if (!fullName && (firstVal || lastVal)) fullName = `${firstVal} ${lastVal}`.trim();
+            if (!fullName && contactType === 'Company') fullName = companyVal;
+            // Last resort: use email as name (better than "Unnamed Contact")
+            if (!fullName && mapping['email'] && row[mapping['email']]) fullName = row[mapping['email']].toString().trim();
+            if (!fullName) fullName = 'Unnamed Contact';
+
+            if (i < 3) {
+                console.log(`[Import] Row ${i}: type="${rawType}" → contactType="${contactType}", firstName="${firstVal}", lastName="${lastVal}", company="${companyVal}", fullName="${fullName}"`);
             }
-            if (!fullName) fullName = row[mapping['company']] || 'Unnamed Contact';
 
             const contactData: any = {
                 type: contactType,
@@ -126,9 +146,12 @@ export const ImportModal = ({ isOpen, onClose, onImport, customFields = [], inli
             contactsToImport.push(contactData);
         }
 
-        setImportProgress(50);
-        await onImport(contactsToImport);
-        setImportProgress(100);
+        // Import one-by-one so progress updates per record
+        const total = contactsToImport.length;
+        for (let i = 0; i < total; i++) {
+            await onImport([contactsToImport[i]]);
+            setImportProgress(Math.round(((i + 1) / total) * 100));
+        }
         
         setTimeout(() => {
             if (onClose) onClose();

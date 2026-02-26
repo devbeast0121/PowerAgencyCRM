@@ -215,12 +215,13 @@ const GeminiPanel = ({ isOpen, onClose, contacts, todos, scheduledEvents, select
     );
 };
 
-export const EmailPage = ({ user, emails, contacts = [], tagGroups = [], todos = [], scheduledEvents = [], initialSelectedEmailId, onClearInitialEmailId, onCompose, onUpdateEmail, onDeleteEmail, isGoogleConnected, onConnectGoogle, onNavigateContact, onBookMeeting, onOpenAddContact, onSummarize }: any) => {
+export const EmailPage = ({ user, emails, contacts = [], tagGroups = [], todos = [], scheduledEvents = [], initialSelectedEmailId, onClearInitialEmailId, onCompose, onUpdateEmail, onDeleteEmail, isGoogleConnected, onConnectGoogle, onNavigateContact, onBookMeeting, onOpenAddContact, onSummarize, onRefreshEmails }: any) => {
   const [selectedFolder, setSelectedFolder] = useState('inbox');
   const [selectedEmail, setSelectedEmail] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isGeminiPanelOpen, setIsGeminiPanelOpen] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isMailSettingsOpen, setIsMailSettingsOpen] = useState(false);
   
   const [selectedEmailIds, setSelectedEmailIds] = useState<Set<string>>(new Set());
@@ -379,6 +380,12 @@ export const EmailPage = ({ user, emails, contacts = [], tagGroups = [], todos =
     if (emailFilters.dateEnd) { const end = new Date(emailFilters.dateEnd); end.setHours(23, 59, 59, 999); result = result.filter((e: any) => new Date(e.date) <= end); }
     return result.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [emails, selectedFolder, searchQuery, labels, emailFilters]);
+
+  const handleRefresh = async () => {
+    if (!onRefreshEmails || isRefreshing) return;
+    setIsRefreshing(true);
+    try { await onRefreshEmails(); } finally { setIsRefreshing(false); }
+  };
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) setSelectedEmailIds(new Set(filteredEmails.map((e: any) => e.id)));
@@ -669,7 +676,21 @@ export const EmailPage = ({ user, emails, contacts = [], tagGroups = [], todos =
                             </>
                         )}
                     </div>
-                    <button onClick={() => onCompose()} className="flex items-center justify-center w-full gap-3 bg-red-600 hover:bg-red-700 text-white shadow-lg shadow-red-200 rounded-2xl px-6 py-3 transition-all"><Pen className="w-4 h-4" /><span className="font-bold">Compose</span></button>
+                    <div className="relative group/compose">
+                        <button
+                            onClick={() => isGoogleConnected && onCompose()}
+                            disabled={!isGoogleConnected}
+                            className="flex items-center justify-center w-full gap-3 bg-red-600 hover:bg-red-700 text-white shadow-lg shadow-red-200 rounded-2xl px-6 py-3 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
+                        >
+                            <Pen className="w-4 h-4" /><span className="font-bold">Compose</span>
+                        </button>
+                        {!isGoogleConnected && (
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 bg-slate-900 text-white text-xs rounded-lg whitespace-nowrap opacity-0 group-hover/compose:opacity-100 transition-opacity pointer-events-none z-10">
+                                Connect Gmail first to send emails
+                                <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-900"></div>
+                            </div>
+                        )}
+                    </div>
                  </div>
                  <div className="flex-1 overflow-y-auto no-scrollbar pb-10">
                      <SidebarItem id="inbox" label="Inbox" icon={Inbox} count={emails.filter((e: any) => e.folder === 'inbox' && !e.isRead).length} />
@@ -694,7 +715,7 @@ export const EmailPage = ({ user, emails, contacts = [], tagGroups = [], todos =
                 <div className="h-12 border-b border-slate-200 flex items-center justify-between px-4 text-slate-500 bg-white shrink-0">
                     <div className="flex items-center gap-4">
                         <input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-red-600 focus:ring-red-500" checked={filteredEmails.length > 0 && selectedEmailIds.size === filteredEmails.length} onChange={handleSelectAll} />
-                        <button className="p-1.5 hover:bg-slate-100 rounded transition-colors" title="Refresh"><RotateCw className="w-4 h-4" /></button>
+                        <button onClick={handleRefresh} disabled={isRefreshing || !isGoogleConnected} className="p-1.5 hover:bg-slate-100 rounded transition-colors disabled:opacity-40" title="Refresh"><RotateCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} /></button>
                         {selectedEmailIds.size > 0 && (
                             <div className="flex items-center gap-2 border-l pl-4 animate-in fade-in slide-in-from-left-2 duration-200 relative">
                                 <button onClick={() => handleBulkAction('archive')} className="p-1.5 hover:bg-slate-100 rounded text-slate-600 transition-colors" title="Archive"><Archive className="w-4 h-4" /></button>
@@ -707,13 +728,13 @@ export const EmailPage = ({ user, emails, contacts = [], tagGroups = [], todos =
                 </div>
                 
                 <div className="flex-1 overflow-y-auto">
-                    {filteredEmails.length === 0 && selectedFolder === 'inbox' && !isGoogleConnected && (
+                    {filteredEmails.length === 0 && !isGoogleConnected && (
                         <div className="flex flex-col items-center justify-center h-full py-20 px-8 text-center">
                             <div className="w-16 h-16 rounded-2xl bg-red-50 flex items-center justify-center mb-5 shadow-sm">
                                 <Mail className="w-8 h-8 text-red-400" />
                             </div>
-                            <h3 className="text-lg font-bold text-slate-800 mb-2">Connect Gmail to see your emails</h3>
-                            <p className="text-slate-500 text-sm mb-6 max-w-xs">Sign in with your Google account once to load your inbox. Emails are saved and will appear automatically on future logins.</p>
+                            <h3 className="text-lg font-bold text-slate-800 mb-2">Connect Gmail to get started</h3>
+                            <p className="text-slate-500 text-sm mb-6 max-w-xs">Sign in with Google once to load your inbox, sent mail, and drafts. Emails are saved so they appear automatically on future logins.</p>
                             <button
                                 onClick={onConnectGoogle}
                                 className="flex items-center gap-2 px-5 py-2.5 bg-white border border-slate-200 rounded-xl shadow-sm hover:shadow-md hover:border-slate-300 transition-all text-sm font-semibold text-slate-700"
@@ -723,7 +744,7 @@ export const EmailPage = ({ user, emails, contacts = [], tagGroups = [], todos =
                             </button>
                         </div>
                     )}
-                    {filteredEmails.length === 0 && (selectedFolder !== 'inbox' || isGoogleConnected) && (
+                    {filteredEmails.length === 0 && isGoogleConnected && (
                         <div className="flex flex-col items-center justify-center h-full py-20 text-center text-slate-400">
                             <Inbox className="w-10 h-10 mb-3 opacity-30" />
                             <p className="text-sm font-medium">No emails here</p>

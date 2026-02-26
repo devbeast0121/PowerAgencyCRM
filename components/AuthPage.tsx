@@ -37,6 +37,12 @@ export const AuthPage = ({ onGoogleLogin }: { onGoogleLogin?: (accessToken: stri
             // Fallback for mock or basic objects
             user.displayName = fullName;
         }
+        // Send welcome email via worker (fire-and-forget, don't block signup)
+        fetch('https://zoom-proxy.illia-2de.workers.dev', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'sendWelcomeEmail', toEmail: email, toName: fullName })
+        }).catch(() => {});
       }
     } catch (err: any) {
       console.error(err);

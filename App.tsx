@@ -165,6 +165,9 @@ export function App() {
   const [contactModalInitialData, setContactModalInitialData] = useState<any>(null);
   const [modalCallback, setModalCallback] = useState<any>(null);
   const [contactsViewMode, setContactsViewMode] = useState<'list' | 'gallery'>('list');
+  const [contactsPage, setContactsPage] = useState(1);
+  const [isClearingContacts, setIsClearingContacts] = useState(false);
+  const CONTACTS_PER_PAGE = 50;
   const [initialCalendarBooking, setInitialCalendarBooking] = useState<any>(null);
   const [isAdvancedSearchOpen, setIsAdvancedSearchOpen] = useState(false);
   const [advancedFilters, setAdvancedFilters] = useState({ type: 'All', lifecycleStage: 'All', groupId: 'All', pipelineId: 'All' });
@@ -200,6 +203,7 @@ export function App() {
   const composeAttachmentInputRef = useRef<HTMLInputElement>(null);
 
   const [isSeeding, setIsSeeding] = useState(false);
+  const [isClearingAll, setIsClearingAll] = useState(false);
   const [isGeminiOpen, setIsGeminiOpen] = useState(false);
   const [geminiPrompt, setGeminiPrompt] = useState('');
   const [geminiLoading, setGeminiLoading] = useState(false);
@@ -277,11 +281,20 @@ export function App() {
   const fetchGmailMessages = async (accessToken: string) => {
     if (accessToken === "mock_gmail_token") return;
     try {
-        const listRes = await fetch('https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=20', {
-            headers: { 'Authorization': `Bearer ${accessToken}` }
-        });
-        if (!listRes.ok) throw new Error(`Gmail list error: ${listRes.statusText}`);
-        const listData = await listRes.json();
+        // Fetch from multiple label buckets so all folders are populated
+        const labelBuckets = ['INBOX', 'SENT', 'DRAFT', 'STARRED'];
+        const allIds = new Map<string, any>();
+        await Promise.all(labelBuckets.map(async (label) => {
+            try {
+                const res = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=20&labelIds=${label}`, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+                if (!res.ok) return;
+                const data = await res.json();
+                (data.messages || []).forEach((m: any) => { if (!allIds.has(m.id)) allIds.set(m.id, m); });
+            } catch {}
+        }));
+        const listData = { messages: Array.from(allIds.values()) };
         if (!listData.messages || listData.messages.length === 0) { setEmails([]); return; }
 
         // Fetch in batches of 5 with 300ms delay between batches to avoid 429
@@ -407,6 +420,127 @@ export function App() {
         await fetchGmailMessages(gmailAccessToken);
         return true;
     } catch (error) { console.error('Failed to send Gmail message:', error); return false; }
+  };
+
+  // Send email with optional .ics calendar invite attachment
+  const sendGmailWithIcs = async (to: string, subject: string, htmlBody: string, icsContent?: string) => {
+    if (!gmailAccessToken || gmailAccessToken === "mock_gmail_token") return false;
+    try {
+        let rawMessage: string;
+        if (icsContent) {
+            const boundary = `boundary_${Date.now()}`;
+            rawMessage = [
+                `To: ${to}`,
+                `Subject: ${subject}`,
+                'MIME-Version: 1.0',
+                `Content-Type: multipart/mixed; boundary="${boundary}"`,
+                '',
+                `--${boundary}`,
+                'Content-Type: text/html; charset=utf-8',
+                '',
+                htmlBody,
+                '',
+                `--${boundary}`,
+                'Content-Type: text/calendar; charset=utf-8; method=REQUEST',
+                'Content-Transfer-Encoding: 7bit',
+                'Content-Disposition: attachment; filename="invite.ics"',
+                '',
+                icsContent,
+                '',
+                `--${boundary}--`
+            ].join('\r\n');
+        } else {
+            rawMessage = [
+                `To: ${to}`,
+                `Subject: ${subject}`,
+                'Content-Type: text/html; charset=utf-8',
+                'MIME-Version: 1.0',
+                '',
+                htmlBody
+            ].join('\r\n');
+        }
+        const encoded = btoa(unescape(encodeURIComponent(rawMessage)))
+            .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+        const response = await fetch('https://www.googleapis.com/gmail/v1/users/me/messages/send', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${gmailAccessToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ raw: encoded })
+        });
+        if (!response.ok) throw new Error(`Gmail send error: ${response.statusText}`);
+        return true;
+    } catch (error) { console.error('Failed to send email with ICS:', error); return false; }
+  };
+
+  // Generate .ics calendar invite string
+  const generateIcs = (title: string, startDate: Date, durationMin: number, location: string, attendeeEmail: string, organizerEmail: string, description: string = '') => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const toIcsDate = (d: Date) =>
+        `${d.getUTCFullYear()}${pad(d.getUTCMonth()+1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}00Z`;
+    const endDate = new Date(startDate.getTime() + durationMin * 60000);
+    const uid = `${Date.now()}-${Math.random().toString(36).slice(2)}@simplecrm`;
+    return [
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        'PRODID:-//SimpleCRM//EN',
+        'METHOD:REQUEST',
+        'BEGIN:VEVENT',
+        `UID:${uid}`,
+        `DTSTAMP:${toIcsDate(new Date())}`,
+        `DTSTART:${toIcsDate(startDate)}`,
+        `DTEND:${toIcsDate(endDate)}`,
+        `SUMMARY:${title}`,
+        `DESCRIPTION:${description.replace(/\n/g, '\\n')}`,
+        `LOCATION:${location}`,
+        `ORGANIZER;CN=SimpleCRM:mailto:${organizerEmail}`,
+        `ATTENDEE;CN=${attendeeEmail};ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:${attendeeEmail}`,
+        'STATUS:CONFIRMED',
+        'SEQUENCE:0',
+        'END:VEVENT',
+        'END:VCALENDAR'
+    ].join('\r\n');
+  };
+
+  // Get Zoom access token via Cloudflare Worker proxy (browser can't call Zoom OAuth directly due to CORS)
+  const getZoomAccessToken = async (): Promise<string | null> => {
+    try {
+        const accountId = 'QpZrBe15TsG_PfT7Bdn-Xw';
+        const clientId = 'Mv52pCmFQQa2GTy95tzNgw';
+        const clientSecret = 'SS9UBFHMfnMZSPYv05CZbCf7B8UjTeI7';
+        console.log('[Zoom] Fetching token via Cloudflare Worker...');
+        const res = await fetch('https://zoom-proxy.illia-2de.workers.dev', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accountId, clientId, clientSecret })
+        });
+        if (!res.ok) { console.error('[Zoom] Token error:', res.status, await res.text()); return null; }
+        const data = await res.json();
+        console.log('[Zoom] Token received:', !!data.access_token);
+        return data.access_token || null;
+    } catch (e) { console.error('[Zoom] Token fetch failed:', e); return null; }
+  };
+
+  // Create a Zoom meeting via Cloudflare Worker proxy and return join URL
+  const createZoomMeeting = async (topic: string, startDate: Date, durationMin: number): Promise<string | null> => {
+    try {
+        const token = await getZoomAccessToken();
+        if (!token) { console.error('[Zoom] No token, skipping meeting creation'); return null; }
+        console.log('[Zoom] Creating meeting:', topic);
+        const res = await fetch('https://zoom-proxy.illia-2de.workers.dev', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'createMeeting',
+                token,
+                topic,
+                start_time: startDate.toISOString(),
+                duration: durationMin
+            })
+        });
+        if (!res.ok) { console.error('[Zoom] Create meeting error:', res.status, await res.text()); return null; }
+        const data = await res.json();
+        console.log('[Zoom] Meeting created, join_url:', data.join_url);
+        return data.join_url || null;
+    } catch (e) { console.error('[Zoom] Meeting creation failed:', e); return null; }
   };
 
   const handleConnectGoogle = async () => {
@@ -569,6 +703,32 @@ export function App() {
       }
   }, [pipelines, currentPipelineId]);
 
+  // Auto-refresh Gmail when user navigates to email tab
+  useEffect(() => {
+      if (view === 'email' && isGoogleEmailConnected && gmailAccessToken) {
+          fetchGmailMessages(gmailAccessToken);
+      }
+  }, [view]);
+
+  // Bulk import handler — receives array of contacts from ImportModal, saves each to Firestore
+  const handleImportContacts = async (contactsToImport: any[]) => {
+    if (!user) { console.error('[handleImportContacts] no user!'); return; }
+    console.log('[handleImportContacts] called, count =', contactsToImport.length);
+    for (const contactData of contactsToImport) {
+      const trimmedName = (contactData.name || '').trim();
+      console.log('[handleImportContacts] saving:', trimmedName, '| type:', contactData.type, '| email:', contactData.emails?.[0]?.value);
+      if (!trimmedName) { console.warn('[handleImportContacts] SKIPPED empty name'); continue; }
+      const { initialNote, ...rest } = contactData;
+      try {
+        const docRef = await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'contacts'), { ...rest, name: trimmedName, createdAt: serverTimestamp() });
+        console.log('[handleImportContacts] saved id:', docRef.id, 'name:', trimmedName);
+        if (initialNote) {
+          await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'notes'), { contactId: docRef.id, content: initialNote, type: 'Note', createdAt: serverTimestamp() });
+        }
+      } catch (e) { console.error('[handleImportContacts] ERROR saving', trimmedName, e); }
+    }
+  };
+
   const handleAddContact = async (contactData: any) => {
     if (!user) return;
     // Trim name
@@ -700,14 +860,39 @@ export function App() {
   // --- Team Members CRUD ---
   const handleAddTeamMember = async (memberData: any) => {
       if (!user) return;
-      // Trim whitespace
       const trimmed = { ...memberData, name: (memberData.name || '').trim(), email: (memberData.email || '').trim() };
       if (!trimmed.name || !trimmed.email) return;
-      // Check for duplicate email
       const emailLower = trimmed.email.toLowerCase();
       const isDuplicate = teamMembers.some((m: any) => m.email?.toLowerCase() === emailLower);
       if (isDuplicate) { alert('A team member with this email already exists.'); return; }
-      try { await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'team_members'), { ...trimmed, createdAt: serverTimestamp() }); } catch (e) { console.error('Add team member error', e); }
+      try {
+          await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'team_members'), { ...trimmed, createdAt: serverTimestamp() });
+          // Send invite email if Gmail connected
+          if (isGoogleEmailConnected && gmailAccessToken) {
+              const inviterName = user.displayName || user.email || 'Your colleague';
+              const appUrl = 'https://power-agency-crm.web.app';
+              const html = `
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:560px;margin:0 auto;padding:32px 24px;background:#fff;">
+  <div style="background:linear-gradient(135deg,#10b981,#059669);border-radius:16px;padding:32px;text-align:center;margin-bottom:32px;">
+    <h1 style="color:#fff;margin:0;font-size:24px;">You've been invited to SimpleCRM</h1>
+    <p style="color:#d1fae5;margin:8px 0 0;">by ${inviterName}</p>
+  </div>
+  <p style="color:#1e293b;font-size:16px;">Hi ${trimmed.name},</p>
+  <p style="color:#475569;">You've been added as a <strong>${trimmed.role || 'Member'}</strong> on the SimpleCRM workspace.</p>
+  <div style="text-align:center;margin:32px 0;">
+    <a href="${appUrl}" style="background:#10b981;color:#fff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:600;font-size:16px;display:inline-block;">Open SimpleCRM</a>
+  </div>
+  <p style="color:#64748b;font-size:14px;">Sign in with this email address (<strong>${trimmed.email}</strong>) to get started.</p>
+  <p style="color:#94a3b8;font-size:12px;margin-top:32px;">Sent via SimpleCRM &mdash; <a href="${appUrl}" style="color:#10b981;">${appUrl}</a></p>
+</div>`;
+              const sent = await sendGmailMessage(trimmed.email, `You've been invited to SimpleCRM by ${inviterName}`, html);
+              if (!sent) {
+                  alert(`Team member "${trimmed.name}" was added, but the invite email could not be sent. Your Gmail session may have expired — try reconnecting Gmail in Settings and resending manually.`);
+              }
+          } else {
+              alert(`Team member "${trimmed.name}" was added. No invite email was sent because Gmail is not connected. Connect Gmail in Settings to send invites.`);
+          }
+      } catch (e) { console.error('Add team member error', e); }
   };
   const handleUpdateTeamMember = async (id: string, data: any) => {
       if (!user) return;
@@ -830,13 +1015,28 @@ export function App() {
   const handleAddScheduledEvent = async (eventData: any) => {
     if (!user) return;
     try {
-        await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'scheduled_events'), { ...eventData, createdAt: serverTimestamp() });
+        const startDate = eventData.startTime?.seconds
+            ? new Date(eventData.startTime.seconds * 1000)
+            : new Date(eventData.startTime);
+        const durationMin = parseInt(eventData.duration || '30', 10);
+        let meetingLink = eventData.location || '';
+        const locationLower = (eventData.location || '').toLowerCase();
+
+        // Auto-create Zoom meeting if location is "zoom"
+        if (locationLower === 'zoom' || locationLower.includes('zoom')) {
+            const zoomUrl = await createZoomMeeting(
+                `${eventData.eventTypeTitle || 'Meeting'} with ${eventData.attendeeName || ''}`,
+                startDate,
+                durationMin
+            );
+            if (zoomUrl) meetingLink = zoomUrl;
+        }
+
+        const enrichedEvent = { ...eventData, location: meetingLink, createdAt: serverTimestamp() };
+        await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'scheduled_events'), enrichedEvent);
+
         // Also create in Google Calendar if connected
         if (isGoogleCalendarConnected && calendarAccessToken && eventData.startTime) {
-            const startDate = eventData.startTime.seconds
-                ? new Date(eventData.startTime.seconds * 1000)
-                : new Date(eventData.startTime);
-            const durationMin = parseInt(eventData.duration || '30', 10);
             const endDate = new Date(startDate.getTime() + durationMin * 60000);
             await handleCreateGoogleCalendarEvent({
                 summary: `${eventData.eventTypeTitle || 'Meeting'} - ${eventData.attendeeName || ''}`.trim(),
@@ -846,13 +1046,60 @@ export function App() {
                 attendeeEmail: eventData.attendeeEmail
             });
         }
+
+        // Send booking confirmation email with .ics invite to attendee
+        if (eventData.attendeeEmail && isGoogleEmailConnected && gmailAccessToken) {
+            const organizerEmail = user.email || '';
+            const title = `${eventData.eventTypeTitle || 'Meeting'} with ${user.displayName || organizerEmail}`;
+            const formattedDate = startDate.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+            const formattedTime = startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const locationLine = meetingLink.startsWith('http')
+                ? `<a href="${meetingLink}" style="color:#10b981;">${meetingLink}</a>`
+                : meetingLink || 'TBD';
+            const html = `
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:560px;margin:0 auto;padding:32px 24px;background:#fff;">
+  <div style="background:linear-gradient(135deg,#10b981,#059669);border-radius:16px;padding:32px;text-align:center;margin-bottom:32px;">
+    <h1 style="color:#fff;margin:0;font-size:24px;">Meeting Confirmed</h1>
+    <p style="color:#d1fae5;margin:8px 0 0;">${title}</p>
+  </div>
+  <table style="width:100%;border-collapse:collapse;">
+    <tr><td style="padding:12px 0;border-bottom:1px solid #f1f5f9;color:#64748b;width:100px;">Date</td><td style="padding:12px 0;border-bottom:1px solid #f1f5f9;font-weight:600;color:#1e293b;">${formattedDate}</td></tr>
+    <tr><td style="padding:12px 0;border-bottom:1px solid #f1f5f9;color:#64748b;">Time</td><td style="padding:12px 0;border-bottom:1px solid #f1f5f9;font-weight:600;color:#1e293b;">${formattedTime} (${durationMin} min)</td></tr>
+    <tr><td style="padding:12px 0;color:#64748b;">Location</td><td style="padding:12px 0;font-weight:600;color:#1e293b;">${locationLine}</td></tr>
+  </table>
+  <p style="margin-top:24px;color:#64748b;font-size:14px;">A calendar invite is attached. Add it to your calendar to get a reminder.</p>
+  <p style="color:#94a3b8;font-size:12px;margin-top:32px;">Sent via SimpleCRM</p>
+</div>`;
+            const ics = generateIcs(title, startDate, durationMin, meetingLink, eventData.attendeeEmail, organizerEmail);
+            await sendGmailWithIcs(eventData.attendeeEmail, `Meeting Confirmed: ${title}`, html, ics);
+        }
     } catch (e) { console.error('Failed to add scheduled event:', e); }
   };
 
-  // Clear all user data from every Firestore collection
+  // Clear all contacts and notes from Firestore
+  const handleClearContacts = async () => {
+    if (!user) return;
+    if (!confirm('This will permanently delete all contacts and their activity notes. Your settings, pipeline, calendar and emails will NOT be deleted. Continue?')) return;
+    setIsClearingContacts(true);
+    try {
+      for (const coll of ['contacts', 'notes']) {
+        const q = query(collection(db, 'artifacts', appId, 'users', user.uid, coll));
+        await new Promise<void>((resolve) => {
+          const unsub = onSnapshot(q, async (snap: any) => {
+            unsub();
+            await Promise.all(snap.docs.map((d: any) => deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, coll, d.id))));
+            resolve();
+          });
+        });
+      }
+    } catch (e) { console.error('Clear contacts error', e); }
+    finally { setIsClearingContacts(false); }
+  };
+
   const handleClearAllData = async () => {
     if (!user) return;
     if (!confirm('This will permanently delete ALL your CRM data. Are you sure?')) return;
+    setIsClearingAll(true);
     const colls = ['contacts', 'notes', 'todos', 'tag_groups', 'event_types', 'scheduled_events', 'email', 'custom_fields', 'pipelines', 'booking_pages'];
     try {
       for (const coll of colls) {
@@ -866,6 +1113,7 @@ export function App() {
         });
       }
     } catch (e) { console.error('Clear error', e); }
+    finally { setIsClearingAll(false); }
   };
 
   const handleSeedData = async () => {
@@ -1362,6 +1610,11 @@ ${cleanText.substring(0, 3000)}
     else if (filterType !== 'All') result = result.filter(c => c.groups && c.groups.includes(filterType));
     return result;
   }, [contacts, searchQuery, filterType]);
+
+  const totalContactPages = Math.ceil(filteredContacts.length / CONTACTS_PER_PAGE);
+  const pagedContacts = filteredContacts.slice((contactsPage - 1) * CONTACTS_PER_PAGE, contactsPage * CONTACTS_PER_PAGE);
+  // Reset to page 1 whenever filter or search changes
+  useEffect(() => { setContactsPage(1); }, [searchQuery, filterType]);
   
   const selectedContact = useMemo(() => contacts.find(c => c.id === selectedContactId), [contacts, selectedContactId]);
 
@@ -1424,18 +1677,18 @@ ${cleanText.substring(0, 3000)}
           <div className={`flex-1 overflow-auto ${view === 'email' ? 'p-0' : selectedContactId ? '' : 'p-3 sm:p-4 md:p-8'}`}>
             <div className={`mx-auto h-full ${view === 'email' ? 'max-w-full' : 'max-w-7xl'}`}>
               {view === 'dashboard' && !selectedContactId && (
-                  <Dashboard contacts={contacts} notes={notes} todos={todos} emails={emails} scheduledEvents={scheduledEvents} setView={setView} onSeedData={handleSeedData} onClearData={handleClearAllData} isSeeding={isSeeding} onUpdateNote={handleUpdateNote} onDeleteNote={handleDeleteNote} user={user} onNavigate={(id: string) => { setSelectedContactId(id); setView('contacts'); }} onToggleTodo={handleToggleTodo} onDeleteTodo={handleDeleteTodo} onSpeak={handleSpeak} isSpeaking={isSpeaking} />
+                  <Dashboard contacts={contacts} notes={notes} todos={todos} emails={emails} scheduledEvents={scheduledEvents} setView={setView} onSeedData={handleSeedData} onClearData={handleClearAllData} isSeeding={isSeeding} isClearingAll={isClearingAll} onUpdateNote={handleUpdateNote} onDeleteNote={handleDeleteNote} user={user} onNavigate={(id: string) => { setSelectedContactId(id); setView('contacts'); }} onToggleTodo={handleToggleTodo} onDeleteTodo={handleDeleteTodo} onSpeak={handleSpeak} isSpeaking={isSpeaking} />
               )}
               {view === 'calendar' && !selectedContactId && (
                   <CalendarPage eventTypes={eventTypes} scheduledEvents={scheduledEvents} bookingPages={bookingPages} onCreateBookingPage={handleCreateBookingPage} onUpdateBookingPage={handleUpdateBookingPage} onDeleteBookingPage={handleDeleteBookingPage} todos={todos} onCreateEventType={handleCreateEventType} onUpdateEventType={handleUpdateEventType} onDeleteEventType={handleDeleteEventType} isGoogleConnected={isGoogleCalendarConnected} onConnectGoogle={handleConnectGoogleCalendar} onDisconnectGoogle={handleDisconnectGoogleCalendar} googleEvents={googleEvents} onBookMeeting={handleAddScheduledEvent} onNavigateToSettings={() => setView('settings')} onCompose={handleCompose} contacts={contacts} onNavigate={(id: string) => { setSelectedContactId(id); setView('contacts'); }} onUpdateScheduledEvent={handleUpdateScheduledEvent} onDeleteScheduledEvent={handleDeleteScheduledEvent} teamMembers={teamMembers} initialBooking={initialCalendarBooking} onClearInitialBooking={() => setInitialCalendarBooking(null)} user={user} />
               )}
               {view === 'email' && !selectedContactId && (
-                 <EmailPage user={user} emails={emails} contacts={contacts} tagGroups={tagGroups} todos={todos} scheduledEvents={scheduledEvents} initialSelectedEmailId={initialSelectedEmailId} onClearInitialEmailId={() => setInitialSelectedEmailId(null)} onCompose={handleCompose} onUpdateEmail={handleUpdateEmail} onDeleteEmail={handleDeleteEmail} isGoogleConnected={isGoogleEmailConnected} onConnectGoogle={handleConnectGoogle} onNavigateContact={(id: string) => { setSelectedContactId(id); setView('contacts'); }} onBookMeeting={(contact: any) => { setInitialCalendarBooking({ name: contact.name, email: contact.email }); setView('calendar'); setSelectedContactId(null); }} onSummarize={handleSummarizeText} onOpenAddContact={(data: any) => { setContactModalInitialData(data); setIsContactModalOpen(true); }} />
+                 <EmailPage user={user} emails={emails} contacts={contacts} tagGroups={tagGroups} todos={todos} scheduledEvents={scheduledEvents} initialSelectedEmailId={initialSelectedEmailId} onClearInitialEmailId={() => setInitialSelectedEmailId(null)} onCompose={handleCompose} onUpdateEmail={handleUpdateEmail} onDeleteEmail={handleDeleteEmail} isGoogleConnected={isGoogleEmailConnected} onConnectGoogle={handleConnectGoogle} onNavigateContact={(id: string) => { setSelectedContactId(id); setView('contacts'); }} onBookMeeting={(contact: any) => { setInitialCalendarBooking({ name: contact.name, email: contact.email }); setView('calendar'); setSelectedContactId(null); }} onSummarize={handleSummarizeText} onOpenAddContact={(data: any) => { setContactModalInitialData(data); setIsContactModalOpen(true); }} onRefreshEmails={gmailAccessToken ? () => fetchGmailMessages(gmailAccessToken) : undefined} />
               )}
               {view === 'groups' && !selectedContactId && (
                   <GroupsPage contacts={contacts} tagGroups={tagGroups} onGroupClick={(filter: string) => { setFilterType(filter); setView('contacts'); }} onAddNewGroup={() => setIsGroupModalOpen(true)} onEditGroup={handleEditGroup} onDeleteGroup={handleDeleteGroup} onCompose={handleCompose} />
               )}
-              {view === 'settings' && !selectedContactId && <SettingsPage teamMembers={teamMembers} onAddTeamMember={handleAddTeamMember} onUpdateTeamMember={handleUpdateTeamMember} onDeleteTeamMember={handleDeleteTeamMember} currentUser={user} customFields={customFields} onAddCustomField={handleAddCustomField} onDeleteCustomField={handleDeleteCustomField} onConnectGmail={handleConnectGoogle} onConnectGoogleCalendar={handleConnectGoogleCalendar} isGmailConnected={isGoogleEmailConnected} isCalendarConnected={isGoogleCalendarConnected} />}
+              {view === 'settings' && !selectedContactId && <SettingsPage teamMembers={teamMembers} onAddTeamMember={handleAddTeamMember} onUpdateTeamMember={handleUpdateTeamMember} onDeleteTeamMember={handleDeleteTeamMember} currentUser={user} customFields={customFields} onAddCustomField={handleAddCustomField} onDeleteCustomField={handleDeleteCustomField} onConnectGmail={handleConnectGoogle} onConnectGoogleCalendar={handleConnectGoogleCalendar} isGmailConnected={isGoogleEmailConnected} isCalendarConnected={isGoogleCalendarConnected} onImportContacts={handleImportContacts} onClearContacts={handleClearContacts} isClearingContacts={isClearingContacts} />}
               {view === 'todo' && !selectedContactId && (
                   <TodoPage user={user} contacts={contacts} onNavigate={(id: string) => { setSelectedContactId(id); setView('contacts'); }} todos={todos} onToggle={handleToggleTodo} onDelete={handleDeleteTodo} onAdd={handleAddTodo} />
               )}
@@ -1467,8 +1720,8 @@ ${cleanText.substring(0, 3000)}
                       <ContactDetail contact={selectedContact} allContacts={contacts} notes={notes.filter(n => n.contactId === selectedContactId)} emails={emails} onClose={() => setSelectedContactId(null)} onUpdate={handleUpdateContact} onDelete={handleDeleteContact} onAddNote={handleAddNote} onUpdateNote={handleUpdateNote} onDeleteNote={handleDeleteNote} onNavigate={(id: string) => { setSelectedContactId(id); setView('contacts'); }} onViewEmail={(emailId: string) => { setInitialSelectedEmailId(emailId); setView('email'); setSelectedContactId(null); }} tagGroups={tagGroups} onAddNewGroup={() => setIsGroupModalOpen(true)} user={user} onGroupClick={handleGroupClick} onCreateLinkedCompany={handleOpenCreateCompanyModal} onCreateCompany={handleAddContact} onCompose={handleCompose} onGenerateSummary={handleGenerateContactSummary} pipelines={pipelines} liveCallProps={liveCallProps} onSpeak={handleSpeak} isSpeaking={isSpeaking} />
                   ) : (
                     view === 'contacts' && (
-                        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-1">
-                          <div className="overflow-x-auto">
+                        <div className="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 flex flex-col">
+                          <div className="overflow-x-auto flex-1">
                             <table className="w-full text-left">
                               <thead className="bg-slate-50 border-b border-slate-200">
                                 <tr>
@@ -1479,7 +1732,7 @@ ${cleanText.substring(0, 3000)}
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-100">
-                                {filteredContacts.map(contact => (
+                                {pagedContacts.map(contact => (
                                     <tr key={contact.id} onClick={() => setSelectedContactId(contact.id)} className="hover:bg-slate-50 cursor-pointer transition-colors group">
                                       <td className="px-3 sm:px-6 py-3 sm:py-4 text-center">{contact.type === 'Company' ? <Building2 className="w-5 h-5 text-orange-500 mx-auto" /> : <UserIcon className="w-5 h-5 text-blue-500 mx-auto" />}</td>
                                       <td className="px-3 sm:px-6 py-3 sm:py-4 font-bold text-slate-900 text-sm sm:text-base">{contact.name}</td>
@@ -1493,6 +1746,21 @@ ${cleanText.substring(0, 3000)}
                               </tbody>
                             </table>
                           </div>
+                          {totalContactPages > 1 && (
+                            <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 bg-white">
+                              <span className="text-sm text-slate-500">
+                                {(contactsPage - 1) * CONTACTS_PER_PAGE + 1}–{Math.min(contactsPage * CONTACTS_PER_PAGE, filteredContacts.length)} of {filteredContacts.length}
+                              </span>
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => setContactsPage(p => Math.max(1, p - 1))} disabled={contactsPage === 1} className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"><ChevronLeft className="w-4 h-4" /> Prev</button>
+                                {Array.from({ length: totalContactPages }, (_, i) => i + 1).filter(p => p === 1 || p === totalContactPages || Math.abs(p - contactsPage) <= 1).reduce<(number | string)[]>((acc, p, idx, arr) => { if (idx > 0 && (p as number) - (arr[idx-1] as number) > 1) acc.push('…'); acc.push(p); return acc; }, []).map((p, i) =>
+                                  typeof p === 'string' ? <span key={i} className="px-2 text-slate-400">…</span> :
+                                  <button key={p} onClick={() => setContactsPage(p as number)} className={`w-8 h-8 text-sm rounded-lg border transition-colors ${contactsPage === p ? 'bg-emerald-500 text-white border-emerald-500' : 'border-slate-200 hover:bg-slate-50'}`}>{p}</button>
+                                )}
+                                <button onClick={() => setContactsPage(p => Math.min(totalContactPages, p + 1))} disabled={contactsPage === totalContactPages} className="px-3 py-1.5 text-sm rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1">Next <ChevronRight className="w-4 h-4" /></button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                     )
                   )}

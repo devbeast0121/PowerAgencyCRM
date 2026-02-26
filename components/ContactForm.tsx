@@ -70,11 +70,43 @@ export const ContactForm = ({ onSubmit, onCancel, existingCompanies, allContacts
     setFetchError(null);
 
     const parsedName = parseLinkedInSlug(formData.linkedin);
-    const apiKey = process.env.API_KEY;
 
+    // --- Try Proxycurl first (real LinkedIn data) ---
+    try {
+        const proxyRes = await fetch('https://zoom-proxy.illia-2de.workers.dev', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'linkedinProfile', linkedinUrl: formData.linkedin })
+        });
+        if (proxyRes.ok) {
+            const p = await proxyRes.json();
+            if (p.full_name || p.first_name) {
+                const updated: any = {};
+                const fullName = p.full_name || `${p.first_name || ''} ${p.last_name || ''}`.trim();
+                if (fullName && !formData.name) updated.name = fullName;
+                if (p.occupation && !formData.title) updated.title = p.occupation;
+                if (p.experiences?.[0]?.company && !formData.company) updated.company = p.experiences[0].company;
+                if (p.summary && !formData.background) updated.background = p.summary;
+                if (p.city || p.country_full_name) updated.location = [p.city, p.country_full_name].filter(Boolean).join(', ');
+                if (p.profile_pic_url && !formData.photo) updated.photo = p.profile_pic_url;
+                const email = p.personal_emails?.[0] || p.personal_email || p.work_email;
+                if (email && (!formData.emails || !formData.emails.some((e: any) => e.value))) {
+                    updated.emails = [{ type: 'Work', value: email }];
+                }
+                setFormData(prev => ({ ...prev, ...updated }));
+                setIsFetchingInfo(false);
+                return;
+            }
+        }
+    } catch (e: any) {
+        console.warn('Proxycurl fetch failed:', e?.message || e);
+    }
+
+    // --- Fallback: Gemini AI with Google Search grounding ---
+    const apiKey = process.env.API_KEY;
     if (!apiKey) {
         if (parsedName) setFormData(prev => ({...prev, name: prev.name || parsedName}));
-        else setFetchError('No API key configured.');
+        else setFetchError('Could not fetch profile info.');
         setIsFetchingInfo(false);
         return;
     }
@@ -83,7 +115,6 @@ export const ContactForm = ({ onSubmit, onCancel, existingCompanies, allContacts
     let text = '';
     let searchWorked = false;
 
-    // Try with Google Search grounding first for real data
     try {
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
@@ -103,7 +134,6 @@ Use empty string "" for any field you cannot verify.`,
         console.warn('Search grounding failed:', e1?.message || e1);
     }
 
-    // Fallback: no grounding, just use AI knowledge + slug hint
     if (!searchWorked) {
         try {
             const response = await ai.models.generateContent({
@@ -122,10 +152,8 @@ For name, just clean up the URL slug "${parsedName}" into a proper name. Leave o
         }
     }
 
-    // Parse the response
     if (text) {
         try {
-            // Extract JSON from response - handle cases where AI adds extra text
             const jsonMatch = text.match(/\{[\s\S]*\}/);
             if (!jsonMatch) throw new Error('No JSON found');
             const data = JSON.parse(jsonMatch[0]);
@@ -147,7 +175,6 @@ For name, just clean up the URL slug "${parsedName}" into a proper name. Leave o
             setFetchError('Name set from URL. Could not parse additional info.');
         }
     } else {
-        // Both calls failed entirely - just use parsed name
         if (parsedName) {
             setFormData(prev => ({...prev, name: prev.name || parsedName}));
             setFetchError('API unavailable. Name parsed from URL.');
