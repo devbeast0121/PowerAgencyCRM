@@ -12,7 +12,7 @@ import { GoogleGenAI, Modality, LiveServerMessage } from "@google/genai";
 import { User } from 'firebase/auth';
 import { 
   auth, db, appId, 
-  signInWithCustomToken, signInAnonymously, onAuthStateChanged, signInWithGoogleCalendar, signInWithGoogle,
+  signInWithCustomToken, signInAnonymously, onAuthStateChanged, signInWithGoogleCalendar, signInWithGoogle, silentReauthGoogle,
   collection, addDoc, setDoc, updateDoc, deleteDoc, doc, query, onSnapshot, serverTimestamp
 } from './firebase';
 import { Sidebar } from './components/Sidebar';
@@ -286,15 +286,30 @@ export function App() {
   // Gmail access token — persisted in localStorage to survive page refresh
   const [gmailAccessToken, setGmailAccessToken] = useState<string | null>(() => localStorage.getItem('gmailAccessToken'));
 
-  // Handle expired Gmail/Calendar token — clear state + localStorage + show toast
-  const handleGmailTokenExpiry = () => {
+  // Handle expired Gmail token — try silent re-auth first, only disconnect if that fails
+  const handleGmailTokenExpiry = async () => {
+    const newToken = await silentReauthGoogle();
+    if (newToken) {
+      localStorage.setItem('gmailAccessToken', newToken);
+      setGmailAccessToken(newToken);
+      setIsGoogleEmailConnected(true);
+      fetchGmailMessages(newToken);
+      return;
+    }
     localStorage.removeItem('gmailAccessToken');
     setGmailAccessToken(null);
     setIsGoogleEmailConnected(false);
     showToast('Gmail session expired. Please reconnect Gmail in Settings.', 'error');
   };
 
-  const handleCalendarTokenExpiry = () => {
+  const handleCalendarTokenExpiry = async () => {
+    const newToken = await silentReauthGoogle('calendar');
+    if (newToken) {
+      localStorage.setItem('calendarAccessToken', newToken);
+      setCalendarAccessToken(newToken);
+      setIsGoogleCalendarConnected(true);
+      return;
+    }
     localStorage.removeItem('calendarAccessToken');
     setCalendarAccessToken(null);
     setIsGoogleCalendarConnected(false);
@@ -585,6 +600,31 @@ export function App() {
       } catch (e) { console.error('Gmail connect error:', e); }
   };
 
+  const fetchGoogleCalendarEvents = async (accessToken: string) => {
+    if (!accessToken || accessToken === "mock_access_token") return;
+    try {
+        const timeMin = new Date();
+        timeMin.setMonth(timeMin.getMonth() - 1);
+        const timeMax = new Date();
+        timeMax.setMonth(timeMax.getMonth() + 3);
+        const response = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin.toISOString()}&timeMax=${timeMax.toISOString()}&maxResults=250&singleEvents=true&orderBy=startTime`, {
+            headers: { 'Authorization': `Bearer ${accessToken}` }
+        });
+        if (response.status === 401) { handleCalendarTokenExpiry(); return; }
+        if (!response.ok) throw new Error(`Google API Error: ${response.statusText}`);
+        const data = await response.json();
+        if (data.items) {
+            const mappedEvents = data.items.map((item: any) => {
+                const start = item.start.dateTime ? new Date(item.start.dateTime) : (item.start.date ? new Date(item.start.date) : null);
+                const end = item.end.dateTime ? new Date(item.end.dateTime) : (item.end.date ? new Date(item.end.date) : null);
+                return { id: item.id, title: item.summary || '(No Title)', start, end, source: 'google', color: 'bg-green-100 text-green-700 border-green-200' };
+            }).filter((e: any) => e.start);
+            setGoogleEvents(mappedEvents);
+            setIsGoogleCalendarConnected(true);
+        }
+    } catch (error) { console.error('Google Calendar fetch error:', error); }
+  };
+
   const handleConnectGoogleCalendar = async () => {
     try {
         const result = await signInWithGoogleCalendar();
@@ -603,33 +643,8 @@ export function App() {
         if (!accessToken) return;
         localStorage.setItem('calendarAccessToken', accessToken);
         setCalendarAccessToken(accessToken);
-        const timeMin = new Date();
-        timeMin.setMonth(timeMin.getMonth() - 1);
-        const timeMax = new Date();
-        timeMax.setMonth(timeMax.getMonth() + 3);
-        const response = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin.toISOString()}&timeMax=${timeMax.toISOString()}&maxResults=250&singleEvents=true&orderBy=startTime`, {
-            headers: { 'Authorization': `Bearer ${accessToken}` }
-        });
-        if (response.status === 401) { handleCalendarTokenExpiry(); return; }
-        if (!response.ok) throw new Error(`Google API Error: ${response.statusText}`);
-        const data = await response.json();
-        if (data.items) {
-            const mappedEvents = data.items.map((item: any) => {
-                const start = item.start.dateTime ? new Date(item.start.dateTime) : (item.start.date ? new Date(item.start.date) : null);
-                const end = item.end.dateTime ? new Date(item.end.dateTime) : (item.end.date ? new Date(item.end.date) : null);
-                return {
-                    id: item.id,
-                    title: item.summary || '(No Title)',
-                    start,
-                    end,
-                    source: 'google',
-                    color: 'bg-green-100 text-green-700 border-green-200'
-                };
-            }).filter((e: any) => e.start);
-            setGoogleEvents(mappedEvents);
-            setIsGoogleCalendarConnected(true);
-            showToast('Google Calendar connected', 'success');
-        }
+        await fetchGoogleCalendarEvents(accessToken);
+        showToast('Google Calendar connected', 'success');
     } catch (error) { console.error('Google Calendar connect error:', error); }
   };
 
@@ -746,6 +761,13 @@ export function App() {
           fetchGmailMessages(gmailAccessToken);
       }
   }, [view]);
+
+  // Re-fetch Google Calendar events on mount if token is already saved (survives page refresh)
+  useEffect(() => {
+      if (calendarAccessToken && calendarAccessToken !== "mock_access_token") {
+          fetchGoogleCalendarEvents(calendarAccessToken);
+      }
+  }, []);
 
   // Bulk import handler — receives array of contacts from ImportModal, saves each to Firestore
   const handleImportContacts = async (contactsToImport: any[]) => {

@@ -42,8 +42,9 @@ let db: any;
 let signInWithCustomToken: any;
 let signInAnonymously: any;
 let onAuthStateChanged: any;
-let signInWithGoogleCalendar: any; 
+let signInWithGoogleCalendar: any;
 let signInWithGoogle: any;
+let silentReauthGoogle: any;
 let createUserWithEmailAndPassword: any;
 let signInWithEmailAndPassword: any;
 let signOut: any;
@@ -79,6 +80,30 @@ if (!isMock) {
         user: result.user,
         credential: GoogleAuthProvider.credentialFromResult(result)
     };
+  };
+
+  // Silent re-auth — gets a fresh Google access token without showing a popup.
+  // Uses prompt:'none' so Google returns the token instantly if the user already granted access.
+  // Pass 'gmail' or 'calendar' to get the right scopes.
+  // Returns the new access token string, or null if silent re-auth fails (user must reconnect manually).
+  silentReauthGoogle = async (type: 'gmail' | 'calendar' = 'gmail'): Promise<string | null> => {
+      try {
+          const provider = new GoogleAuthProvider();
+          if (type === 'gmail') {
+              provider.addScope('https://www.googleapis.com/auth/gmail.readonly');
+              provider.addScope('https://www.googleapis.com/auth/gmail.send');
+          } else {
+              provider.addScope('https://www.googleapis.com/auth/calendar.events');
+          }
+          provider.setCustomParameters({ prompt: 'none' });
+          const currentUser = auth.currentUser;
+          if (!currentUser) return null;
+          const result = await signInWithPopup(auth, provider);
+          const credential = GoogleAuthProvider.credentialFromResult(result);
+          return credential?.accessToken ?? null;
+      } catch {
+          return null;
+      }
   };
 
   // General Google Sign In (with Gmail scopes for real integration)
@@ -171,6 +196,10 @@ if (!isMock) {
       const user = { uid: 'google-' + Math.random(), displayName: 'Google User', email: 'test@gmail.com', photoURL: null };
       setMockUser(user, auth);
       return { user, credential: { accessToken: "mock_gmail_token" } };
+  };
+
+  silentReauthGoogle = async (): Promise<string | null> => {
+      return "mock_gmail_token";
   };
 
 
@@ -308,7 +337,7 @@ export const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-i
 export { 
   app, auth, db, 
   signInWithCustomToken, signInAnonymously, onAuthStateChanged, 
-  signInWithGoogleCalendar, signInWithGoogle,
+  signInWithGoogleCalendar, signInWithGoogle, silentReauthGoogle,
   createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
   collection, addDoc, setDoc, updateDoc, deleteDoc, doc, query, onSnapshot, serverTimestamp
 };
