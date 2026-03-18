@@ -27,6 +27,7 @@ import { ContactDetail } from './components/ContactDetail';
 import { ContactForm } from './components/ContactForm';
 import { AuthPage } from './components/AuthPage';
 import { StatusBadge } from './components/Shared';
+import { ToastContainer, ToastMessage } from './components/Toast';
 import { RichTextEditor } from './components/RichTextEditor';
 import { GROUP_COLORS } from './constants';
 import { decodeBase64, decodeAudioData, formatFileSize } from './utils';
@@ -213,11 +214,19 @@ export function App() {
   const [summaryText, setSummaryText] = useState('');
   const [isSummaryLoading, setIsSummaryLoading] = useState(false);
 
-  // Google Integration State
-  const [isGoogleCalendarConnected, setIsGoogleCalendarConnected] = useState(false);
+  // Toast notifications
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const showToast = (message: string, type: ToastMessage['type'] = 'info') => {
+    const id = Math.random().toString(36).slice(2);
+    setToasts(prev => [...prev, { id, type, message }]);
+  };
+  const removeToast = (id: string) => setToasts(prev => prev.filter(t => t.id !== id));
+
+  // Google Integration State — tokens persisted in localStorage to survive refresh
+  const [isGoogleCalendarConnected, setIsGoogleCalendarConnected] = useState(() => !!localStorage.getItem('calendarAccessToken'));
   const [googleEvents, setGoogleEvents] = useState<any[]>([]);
-  const [calendarAccessToken, setCalendarAccessToken] = useState<string | null>(null);
-  const [isGoogleEmailConnected, setIsGoogleEmailConnected] = useState(false);
+  const [calendarAccessToken, setCalendarAccessToken] = useState<string | null>(() => localStorage.getItem('calendarAccessToken'));
+  const [isGoogleEmailConnected, setIsGoogleEmailConnected] = useState(() => !!localStorage.getItem('gmailAccessToken'));
 
   const initAudio = () => {
     if (!audioContextRef.current) {
@@ -274,8 +283,24 @@ export function App() {
     setIsContactModalOpen(true);
   };
 
-  // Gmail access token stored in state for API calls (valid only for current session)
-  const [gmailAccessToken, setGmailAccessToken] = useState<string | null>(null);
+  // Gmail access token — persisted in localStorage to survive page refresh
+  const [gmailAccessToken, setGmailAccessToken] = useState<string | null>(() => localStorage.getItem('gmailAccessToken'));
+
+  // Handle expired Gmail/Calendar token — clear state + localStorage + show toast
+  const handleGmailTokenExpiry = () => {
+    localStorage.removeItem('gmailAccessToken');
+    setGmailAccessToken(null);
+    setIsGoogleEmailConnected(false);
+    showToast('Gmail session expired. Please reconnect Gmail in Settings.', 'error');
+  };
+
+  const handleCalendarTokenExpiry = () => {
+    localStorage.removeItem('calendarAccessToken');
+    setCalendarAccessToken(null);
+    setIsGoogleCalendarConnected(false);
+    setGoogleEvents([]);
+    showToast('Google Calendar session expired. Please reconnect in Settings.', 'error');
+  };
 
   // Fetch real Gmail messages using the Gmail API (batched to avoid 429)
   const fetchGmailMessages = async (accessToken: string) => {
@@ -289,6 +314,7 @@ export function App() {
                 const res = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=20&labelIds=${label}`, {
                     headers: { 'Authorization': `Bearer ${accessToken}` }
                 });
+                if (res.status === 401) { handleGmailTokenExpiry(); return; }
                 if (!res.ok) return;
                 const data = await res.json();
                 (data.messages || []).forEach((m: any) => { if (!allIds.has(m.id)) allIds.set(m.id, m); });
@@ -415,6 +441,7 @@ export function App() {
             },
             body: JSON.stringify({ raw: encoded })
         });
+        if (response.status === 401) { handleGmailTokenExpiry(); return false; }
         if (!response.ok) throw new Error(`Gmail send error: ${response.statusText}`);
         // Refresh inbox after sending
         await fetchGmailMessages(gmailAccessToken);
@@ -466,6 +493,7 @@ export function App() {
             headers: { 'Authorization': `Bearer ${gmailAccessToken}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ raw: encoded })
         });
+        if (response.status === 401) { handleGmailTokenExpiry(); return false; }
         if (!response.ok) throw new Error(`Gmail send error: ${response.statusText}`);
         return true;
     } catch (error) { console.error('Failed to send email with ICS:', error); return false; }
@@ -548,9 +576,11 @@ export function App() {
           const result = await signInWithGoogle();
           const accessToken = result.credential?.accessToken;
           if (accessToken) {
+              localStorage.setItem('gmailAccessToken', accessToken);
               setGmailAccessToken(accessToken);
               setIsGoogleEmailConnected(true);
               await fetchGmailMessages(accessToken);
+              showToast('Gmail connected', 'success');
           }
       } catch (e) { console.error('Gmail connect error:', e); }
   };
@@ -560,6 +590,7 @@ export function App() {
         const result = await signInWithGoogleCalendar();
         const accessToken = result.credential?.accessToken;
         if (accessToken === "mock_access_token") {
+            localStorage.setItem('calendarAccessToken', accessToken);
             setCalendarAccessToken(accessToken);
             setIsGoogleCalendarConnected(true);
             const today = new Date();
@@ -570,6 +601,7 @@ export function App() {
             return;
         }
         if (!accessToken) return;
+        localStorage.setItem('calendarAccessToken', accessToken);
         setCalendarAccessToken(accessToken);
         const timeMin = new Date();
         timeMin.setMonth(timeMin.getMonth() - 1);
@@ -578,6 +610,7 @@ export function App() {
         const response = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin.toISOString()}&timeMax=${timeMax.toISOString()}&maxResults=250&singleEvents=true&orderBy=startTime`, {
             headers: { 'Authorization': `Bearer ${accessToken}` }
         });
+        if (response.status === 401) { handleCalendarTokenExpiry(); return; }
         if (!response.ok) throw new Error(`Google API Error: ${response.statusText}`);
         const data = await response.json();
         if (data.items) {
@@ -595,6 +628,7 @@ export function App() {
             }).filter((e: any) => e.start);
             setGoogleEvents(mappedEvents);
             setIsGoogleCalendarConnected(true);
+            showToast('Google Calendar connected', 'success');
         }
     } catch (error) { console.error('Google Calendar connect error:', error); }
   };
@@ -620,6 +654,7 @@ export function App() {
             },
             body: JSON.stringify(body)
         });
+        if (response.status === 401) { handleCalendarTokenExpiry(); return; }
         if (!response.ok) throw new Error(`Google Calendar create error: ${response.statusText}`);
         const created = await response.json();
         // Add to local state immediately
@@ -635,9 +670,11 @@ export function App() {
   };
 
   const handleDisconnectGoogleCalendar = () => {
+      localStorage.removeItem('calendarAccessToken');
       setIsGoogleCalendarConnected(false);
       setGoogleEvents([]);
       setCalendarAccessToken(null);
+      showToast('Google Calendar disconnected', 'info');
   };
 
   useEffect(() => {
@@ -863,34 +900,39 @@ export function App() {
       const trimmed = { ...memberData, name: (memberData.name || '').trim(), email: (memberData.email || '').trim() };
       if (!trimmed.name || !trimmed.email) return;
       const emailLower = trimmed.email.toLowerCase();
+      if (user.email && emailLower === user.email.toLowerCase()) { showToast('You cannot invite yourself. You are already the workspace owner.', 'error'); return; }
       const isDuplicate = teamMembers.some((m: any) => m.email?.toLowerCase() === emailLower);
-      if (isDuplicate) { alert('A team member with this email already exists.'); return; }
+      if (isDuplicate) { showToast('A team member with this email already exists.', 'error'); return; }
       try {
-          await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'team_members'), { ...trimmed, createdAt: serverTimestamp() });
-          // Send invite email if Gmail connected
-          if (isGoogleEmailConnected && gmailAccessToken) {
-              const inviterName = user.displayName || user.email || 'Your colleague';
-              const appUrl = 'https://power-agency-crm.web.app';
-              const html = `
-<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:560px;margin:0 auto;padding:32px 24px;background:#fff;">
-  <div style="background:linear-gradient(135deg,#10b981,#059669);border-radius:16px;padding:32px;text-align:center;margin-bottom:32px;">
-    <h1 style="color:#fff;margin:0;font-size:24px;">You've been invited to SimpleCRM</h1>
-    <p style="color:#d1fae5;margin:8px 0 0;">by ${inviterName}</p>
-  </div>
-  <p style="color:#1e293b;font-size:16px;">Hi ${trimmed.name},</p>
-  <p style="color:#475569;">You've been added as a <strong>${trimmed.role || 'Member'}</strong> on the SimpleCRM workspace.</p>
-  <div style="text-align:center;margin:32px 0;">
-    <a href="${appUrl}" style="background:#10b981;color:#fff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:600;font-size:16px;display:inline-block;">Open SimpleCRM</a>
-  </div>
-  <p style="color:#64748b;font-size:14px;">Sign in with this email address (<strong>${trimmed.email}</strong>) to get started.</p>
-  <p style="color:#94a3b8;font-size:12px;margin-top:32px;">Sent via SimpleCRM &mdash; <a href="${appUrl}" style="color:#10b981;">${appUrl}</a></p>
-</div>`;
-              const sent = await sendGmailMessage(trimmed.email, `You've been invited to SimpleCRM by ${inviterName}`, html);
-              if (!sent) {
-                  alert(`Team member "${trimmed.name}" was added, but the invite email could not be sent. Your Gmail session may have expired — try reconnecting Gmail in Settings and resending manually.`);
-              }
+          // Generate unique invite token
+          const inviteToken = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+          const memberDoc = await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'team_members'), {
+              ...trimmed,
+              inviteToken,
+              inviteStatus: 'pending',
+              createdAt: serverTimestamp()
+          });
+
+          // Always send invite via Resend (no Gmail required)
+          const inviterName = user.displayName || user.email || 'Your colleague';
+          const inviteUrl = `https://power-agency-crm.web.app?invite=${inviteToken}&uid=${user.uid}&mid=${memberDoc.id}`;
+          const res = await fetch('https://zoom-proxy.illia-2de.workers.dev', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                  action: 'sendTeamInvite',
+                  toEmail: trimmed.email,
+                  toName: trimmed.name,
+                  inviterName,
+                  role: trimmed.role || 'Member',
+                  inviteUrl
+              })
+          });
+          const result = await res.json();
+          if (result.id) {
+              showToast(`Invite sent to ${trimmed.name}`, 'success');
           } else {
-              alert(`Team member "${trimmed.name}" was added. No invite email was sent because Gmail is not connected. Connect Gmail in Settings to send invites.`);
+              showToast(`"${trimmed.name}" added but invite email failed.`, 'error');
           }
       } catch (e) { console.error('Add team member error', e); }
   };
@@ -977,9 +1019,9 @@ export function App() {
   const handleCreateEventType = async (data: any) => {
     if (!user) return;
     const duration = parseInt(data.duration);
-    if (!duration || duration < 1) { alert('Duration must be at least 1 minute.'); return; }
+    if (!duration || duration < 1) { showToast('Duration must be at least 1 minute.', 'error'); return; }
     const slug = (data.slug || '').trim();
-    if (slug && eventTypes.some((et: any) => et.slug === slug)) { alert('An event type with this slug already exists.'); return; }
+    if (slug && eventTypes.some((et: any) => et.slug === slug)) { showToast('An event type with this slug already exists.', 'error'); return; }
     await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'event_types'), { ...data, duration: String(duration), createdAt: serverTimestamp() });
   };
 
@@ -996,9 +1038,9 @@ export function App() {
   const handleCreateBookingPage = async (data: any) => {
     if (!user) return;
     const slug = (data.slug || '').trim();
-    if (!slug) { alert('URL slug is required.'); return; }
-    if (bookingPages.some((bp: any) => bp.slug === slug)) { alert('A booking page with this slug already exists. Please choose a different one.'); return; }
-    if (!data.includedEventTypeIds || data.includedEventTypeIds.length === 0) { alert('Please include at least one event type.'); return; }
+    if (!slug) { showToast('URL slug is required.', 'error'); return; }
+    if (bookingPages.some((bp: any) => bp.slug === slug)) { showToast('A booking page with this slug already exists.', 'error'); return; }
+    if (!data.includedEventTypeIds || data.includedEventTypeIds.length === 0) { showToast('Please include at least one event type.', 'error'); return; }
     await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'booking_pages'), { ...data, slug, createdAt: serverTimestamp() });
   };
 
@@ -1045,6 +1087,28 @@ export function App() {
                 endTime: endDate,
                 attendeeEmail: eventData.attendeeEmail
             });
+        }
+
+        // Notify organizer via Resend (always — no Gmail needed)
+        if (user?.email && eventData.attendeeEmail) {
+            const formattedDate = startDate.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+            const formattedTime = startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            fetch('https://zoom-proxy.illia-2de.workers.dev', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'sendBookingNotification',
+                    organizerEmail: user.email,
+                    organizerName: user.displayName || user.email,
+                    attendeeName: eventData.attendeeName || 'Guest',
+                    attendeeEmail: eventData.attendeeEmail,
+                    title: `${eventData.eventTypeTitle || 'Meeting'} with ${eventData.attendeeName || 'Guest'}`,
+                    date: formattedDate,
+                    time: formattedTime,
+                    duration: durationMin,
+                    location: meetingLink
+                })
+            }).catch(() => {});
         }
 
         // Send booking confirmation email with .ics invite to attendee
@@ -1098,9 +1162,9 @@ export function App() {
 
   const handleClearAllData = async () => {
     if (!user) return;
-    if (!confirm('This will permanently delete ALL your CRM data. Are you sure?')) return;
+    if (!confirm('This will permanently delete ALL your CRM data including contacts, pipelines, calendar, team members, and custom fields. This cannot be undone. Are you sure?')) return;
     setIsClearingAll(true);
-    const colls = ['contacts', 'notes', 'todos', 'tag_groups', 'event_types', 'scheduled_events', 'email', 'custom_fields', 'pipelines', 'booking_pages'];
+    const colls = ['contacts', 'notes', 'todos', 'tag_groups', 'event_types', 'scheduled_events', 'email', 'custom_fields', 'pipelines', 'booking_pages', 'team_members'];
     try {
       for (const coll of colls) {
         const q = query(collection(db, 'artifacts', appId, 'users', user.uid, coll));
@@ -1557,7 +1621,7 @@ ${cleanText.substring(0, 3000)}
     for (let i = 0; i < files.length; i++) {
         const file = files[i];
         if (file.size > MAX_SIZE) {
-            alert(`File "${file.name}" exceeds the 25MB limit.`);
+            showToast(`File "${file.name}" exceeds the 25MB limit.`, 'error');
             continue;
         }
         newAttachments.push({
@@ -1586,7 +1650,7 @@ ${cleanText.substring(0, 3000)}
       const combinedDate = new Date(scheduleDate);
       combinedDate.setHours(hours, minutes, 0, 0);
       if (combinedDate <= new Date()) {
-          alert("Please select a future date and time.");
+          showToast('Please select a future date and time.', 'error');
           return;
       }
       handleComposeSubmit(null as any, true, combinedDate);
@@ -1640,6 +1704,7 @@ ${cleanText.substring(0, 3000)}
   );
   if (!user) return <ErrorBoundary><AuthPage onGoogleLogin={(accessToken: string) => {
     if (accessToken && accessToken !== "mock_gmail_token") {
+      localStorage.setItem('gmailAccessToken', accessToken);
       setGmailAccessToken(accessToken);
       setIsGoogleEmailConnected(true);
       fetchGmailMessages(accessToken);
@@ -1688,7 +1753,7 @@ ${cleanText.substring(0, 3000)}
               {view === 'groups' && !selectedContactId && (
                   <GroupsPage contacts={contacts} tagGroups={tagGroups} onGroupClick={(filter: string) => { setFilterType(filter); setView('contacts'); }} onAddNewGroup={() => setIsGroupModalOpen(true)} onEditGroup={handleEditGroup} onDeleteGroup={handleDeleteGroup} onCompose={handleCompose} />
               )}
-              {view === 'settings' && !selectedContactId && <SettingsPage teamMembers={teamMembers} onAddTeamMember={handleAddTeamMember} onUpdateTeamMember={handleUpdateTeamMember} onDeleteTeamMember={handleDeleteTeamMember} currentUser={user} customFields={customFields} onAddCustomField={handleAddCustomField} onDeleteCustomField={handleDeleteCustomField} onConnectGmail={handleConnectGoogle} onConnectGoogleCalendar={handleConnectGoogleCalendar} isGmailConnected={isGoogleEmailConnected} isCalendarConnected={isGoogleCalendarConnected} onImportContacts={handleImportContacts} onClearContacts={handleClearContacts} isClearingContacts={isClearingContacts} />}
+              {view === 'settings' && !selectedContactId && <SettingsPage teamMembers={teamMembers} onAddTeamMember={handleAddTeamMember} onUpdateTeamMember={handleUpdateTeamMember} onDeleteTeamMember={handleDeleteTeamMember} currentUser={user} customFields={customFields} onAddCustomField={handleAddCustomField} onDeleteCustomField={handleDeleteCustomField} onConnectGmail={handleConnectGoogle} onConnectGoogleCalendar={handleConnectGoogleCalendar} isGmailConnected={isGoogleEmailConnected} isCalendarConnected={isGoogleCalendarConnected} onImportContacts={handleImportContacts} onClearContacts={handleClearContacts} isClearingContacts={isClearingContacts} onClearAll={handleClearAllData} isClearingAll={isClearingAll} />}
               {view === 'todo' && !selectedContactId && (
                   <TodoPage user={user} contacts={contacts} onNavigate={(id: string) => { setSelectedContactId(id); setView('contacts'); }} todos={todos} onToggle={handleToggleTodo} onDelete={handleDeleteTodo} onAdd={handleAddTodo} />
               )}
@@ -2039,6 +2104,7 @@ ${cleanText.substring(0, 3000)}
           </div>
         )}
       </div>
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
     </ErrorBoundary>
   );
 }

@@ -11,7 +11,7 @@ const getApiKey = (): string | undefined => {
     return key && key !== '' ? key : undefined;
 };
 
-export const Dashboard = ({ contacts, notes, todos, emails, scheduledEvents, setView, onSeedData, onClearData, isSeeding, isClearingAll, onUpdateNote, onDeleteNote, user, onNavigate, onToggleTodo, onDeleteTodo, onSpeak, isSpeaking, isAudioUnlocked }: any) => {
+export const Dashboard = ({ contacts, notes, todos, emails, scheduledEvents, setView, onUpdateNote, onDeleteNote, user, onNavigate, onToggleTodo, onDeleteTodo, onSpeak, isSpeaking }: any) => {
   const [briefing, setBriefing] = useState<string | null>(null);
   const [isBriefingLoading, setIsBriefingLoading] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -147,18 +147,6 @@ export const Dashboard = ({ contacts, notes, todos, emails, scheduledEvents, set
     <div className="space-y-6">
       <header className="flex justify-between items-end flex-wrap gap-2">
         <div><h2 className="text-xl sm:text-2xl font-bold text-slate-800">Dashboard</h2><p className="text-slate-500 text-sm sm:text-base">Overview of your companies and people.</p></div>
-        <div className="flex items-center gap-2">
-          {onSeedData && (
-            <button onClick={onSeedData} disabled={isSeeding} className="text-xs px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg hover:bg-emerald-100 font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-1.5">
-              {isSeeding ? (<><svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg>Loading…</>) : 'Load Demo Data'}
-            </button>
-          )}
-          {onClearData && (
-            <button onClick={onClearData} disabled={isSeeding || isClearingAll} className="text-xs px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-lg hover:bg-red-100 font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-1.5">
-              {isClearingAll ? (<><svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg>Clearing…</>) : 'Clear All Data'}
-            </button>
-          )}
-        </div>
       </header>
       
       <div className={`bg-gradient-to-r from-indigo-600 to-emerald-600 rounded-2xl p-0.5 shadow-md overflow-hidden transition-all duration-500 ease-in-out ${isExpanded ? 'max-h-[2000px]' : 'max-h-[120px] sm:max-h-[84px]'}`}>
